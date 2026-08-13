@@ -1,0 +1,90 @@
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+
+  laravel:
+    build: .
+    env_file:
+      - .env
+    environment:
+      APP_URL: http://tripwise.localhost
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: tripwise_inventory
+      DB_USERNAME: tripwise
+      DB_PASSWORD: ${DB_PASSWORD}
+      BROADCAST_CONNECTION: reverb
+      REVERB_HOST: reverb
+      SESSION_DOMAIN: .localhost
+      SANCTUM_STATEFUL_DOMAINS: tripwise.localhost,localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.laravel.rule=Host(`tripwise.localhost`)
+      - traefik.http.routers.laravel.entrypoints=web
+      - traefik.http.services.laravel.loadbalancer.server.port=8000
+    networks:
+      - edge
+      - internal
+
+  reverb:
+    build: .
+    command: php artisan reverb:start --host=0.0.0.0 --port=8080
+    env_file:
+      - .env
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: tripwise_inventory
+      DB_USERNAME: tripwise
+      DB_PASSWORD: ${DB_PASSWORD}
+      BROADCAST_CONNECTION: reverb
+      REVERB_SERVER_HOST: 0.0.0.0
+      REVERB_SERVER_PORT: 8080
+    depends_on:
+      - laravel
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.reverb.rule=Host(`reverb.localhost`)
+      - traefik.http.routers.reverb.entrypoints=web
+      - traefik.http.services.reverb.loadbalancer.server.port=8080
+    networks:
+      - edge
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tripwise_inventory
+      POSTGRES_USER: tripwise
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tripwise -d tripwise_inventory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+networks:
+  edge:
+  internal:
+
+volumes:
+  postgres_data:
