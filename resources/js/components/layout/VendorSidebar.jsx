@@ -45,7 +45,7 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
           <Store className="w-5 h-5" />
         </div>
         <div className="brand-text">
-          <span className="brand-name">PureRide TNVS</span>
+          <span className="brand-name">TRIPWISE</span>
           <span className="brand-sub">VENDOR PORTAL</span>
         </div>
       </div>

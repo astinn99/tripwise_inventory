@@ -32,7 +32,7 @@ export const Login = ({ portal = 'internal' }) => {
                         {isVendor ? <Store className="w-4 h-4" /> : <Package className="w-4 h-4" />}
                     </span>
                     <div>
-                        <span className="login-brand-title">PureRide TNVS</span>
+                        <span className="login-brand-title">TRIPWISE</span>
                         <span className="login-brand-sub">{isVendor ? 'Vendor Portal' : 'Supply Chain'}</span>
                     </div>
                 </div>

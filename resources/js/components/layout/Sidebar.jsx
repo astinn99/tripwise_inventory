@@ -103,7 +103,7 @@ export const Sidebar = () => {
             <Package className="w-5 h-5" />
         </div>
         <div className="brand-text">
-          <span className="brand-name">PureRide TNVS</span>
+          <span className="brand-name">TRIPWISE</span>
           <span className="brand-sub">SUPPLY CHAIN & INVENTORY</span>
         </div>
       </div>
