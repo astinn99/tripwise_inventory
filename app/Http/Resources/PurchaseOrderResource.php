@@ -16,14 +16,14 @@ class PurchaseOrderResource extends JsonResource
             'supplierId' => $this->supplierAccount?->code,
             'supplier' => $this->supplier,
             'contactPerson' => $this->contact_person,
-            'items' => $this->items->map(fn ($item) => [
+            'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($item) => [
                 'itemCode' => $item->item_code,
                 'description' => $item->description,
                 'quantity' => $item->quantity,
                 'unitPrice' => (float) $item->unit_price,
                 'total' => (float) $item->total,
                 'deliveredQty' => $item->delivered_qty,
-            ])->values(),
+            ])->values(), []),
             'totalCost' => (float) $this->total_cost,
             'budgetReference' => $this->budget_reference,
             'paymentTerms' => $this->payment_terms,
@@ -32,17 +32,17 @@ class PurchaseOrderResource extends JsonResource
             'warranty' => $this->warranty,
             'warrantyMonths' => $this->warranty_months,
             'warrantyLabel' => \App\Support\WarrantyDuration::label($this->warranty_months, $this->warranty),
-            'warrantyFileUrl' => $this->warranty_file_path ? asset('storage/'.$this->warranty_file_path) : null,
+            'warrantyFileUrl' => $this->warranty_file_path ? '/storage/'.$this->warranty_file_path : null,
             'financeApprovalStatus' => $this->finance_approval_status,
             'poStatus' => $this->po_status,
             'createdDate' => optional($this->created_date)?->format('Y-m-d'),
             'approver' => $this->approver,
             'financeRemarks' => $this->finance_remarks,
-            'timeline' => $this->timeline->map(fn ($step) => [
+            'timeline' => $this->whenLoaded('timeline', fn () => $this->timeline->map(fn ($step) => [
                 'step' => $step->step,
                 'date' => $step->step_date,
                 'status' => $step->status,
-            ])->values(),
+            ])->values(), []),
         ];
     }
 }

@@ -98,8 +98,9 @@ return [
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'require'),
             'options' => extension_loaded('pdo_pgsql') ? array_filter([
+                \PDO::ATTR_TIMEOUT => 5,
                 \PDO::ATTR_EMULATE_PREPARES => filter_var(env('DB_EMULATE_PREPARES', false), FILTER_VALIDATE_BOOL),
-            ]) : [],
+            ], fn ($value) => $value !== false && $value !== null) : [],
         ],
 
         'sqlsrv' => [

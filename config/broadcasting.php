@@ -42,7 +42,8 @@ return [
                 'useTLS' => env('REVERB_SCHEME', 'http') === 'https',
             ],
             'client_options' => [
-                // Guzzle client options: https://docs.guzzlephp.org/en/stable/request-options.html
+                'timeout' => 0.4,
+                'connect_timeout' => 0.2,
             ],
         ],
 

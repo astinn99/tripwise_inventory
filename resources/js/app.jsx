@@ -7,10 +7,8 @@ const root = document.getElementById('app');
 
 if (root) {
     createRoot(root).render(
-        <React.StrictMode>
-            <BrowserRouter>
-                <PureRideApp />
-            </BrowserRouter>
-        </React.StrictMode>
+        <BrowserRouter>
+            <PureRideApp />
+        </BrowserRouter>
     );
 }

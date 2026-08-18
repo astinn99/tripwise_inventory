@@ -24,7 +24,7 @@ class QuotationResource extends JsonResource
             'warranty' => $this->warranty,
             'warrantyMonths' => $this->warranty_months,
             'warrantyLabel' => \App\Support\WarrantyDuration::label($this->warranty_months, $this->warranty),
-            'warrantyFileUrl' => $this->warranty_file_path ? asset('storage/'.$this->warranty_file_path) : null,
+            'warrantyFileUrl' => $this->warranty_file_path ? '/storage/'.$this->warranty_file_path : null,
             'deliveryTimeDays' => $this->delivery_time_days,
             'qualityRating' => (float) $this->quality_rating,
             'paymentTerms' => $this->payment_terms,

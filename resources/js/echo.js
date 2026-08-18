@@ -1,6 +1,6 @@
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
-import { getAuthToken } from './services/api';
+import { ensureCsrf, getAuthToken } from './services/api';
 
 window.Pusher = Pusher;
 
@@ -9,21 +9,20 @@ function readCookie(name) {
     return match ? decodeURIComponent(match[1]) : '';
 }
 
-export function createEcho() {
-    const key = import.meta.env.VITE_REVERB_APP_KEY;
-    if (!key) {
-        return null;
-    }
+export async function createEcho() {
+    const key = import.meta.env.VITE_REVERB_APP_KEY || 'pureride-local-key';
+
+    await ensureCsrf();
 
     const token = getAuthToken();
 
     return new Echo({
         broadcaster: 'reverb',
         key,
-        wsHost: import.meta.env.VITE_REVERB_HOST ?? window.location.hostname,
-        wsPort: Number(import.meta.env.VITE_REVERB_PORT ?? 8080),
-        wssPort: Number(import.meta.env.VITE_REVERB_PORT ?? 8080),
-        forceTLS: (import.meta.env.VITE_REVERB_SCHEME ?? 'http') === 'https',
+        wsHost: import.meta.env.VITE_REVERB_HOST || window.location.hostname,
+        wsPort: Number(import.meta.env.VITE_REVERB_PORT || 8080),
+        wssPort: Number(import.meta.env.VITE_REVERB_PORT || 8080),
+        forceTLS: (import.meta.env.VITE_REVERB_SCHEME || window.location.protocol.replace(':', '')) === 'https',
         enabledTransports: ['ws', 'wss'],
         authEndpoint: '/broadcasting/auth',
         auth: {

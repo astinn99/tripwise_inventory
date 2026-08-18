@@ -21,7 +21,7 @@ class DeliveryResource extends JsonResource
             'trackingNumber' => $this->tracking_number,
             'inspectionResult' => $this->inspection_result,
             'inspectionNotes' => $this->inspection_notes,
-            'itemsDelivered' => $this->items->map(fn ($item) => [
+            'itemsDelivered' => $this->whenLoaded('items', fn () => $this->items->map(fn ($item) => [
                 'itemCode' => $item->item_code,
                 'description' => $item->description,
                 'poQuantity' => $item->po_quantity,
@@ -29,7 +29,7 @@ class DeliveryResource extends JsonResource
                 'condition' => $item->condition,
                 'result' => $item->result,
                 'remarks' => $item->remarks,
-            ])->values(),
+            ])->values(), []),
         ];
     }
 }

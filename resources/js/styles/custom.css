@@ -1,7 +1,5 @@
 /* TNVS Supply Chain & Inventory Management Subsystem - High Visibility Pure Black Text Theme */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
 :root {
   /* Page Canvas & Header Background */
   --bg-main: #F8FAFC;
@@ -108,6 +106,18 @@ body {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+}
+
+.data-loading-bar {
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--primary-accent), transparent);
+  background-size: 40% 100%;
+  animation: data-loading-slide 1s linear infinite;
+}
+
+@keyframes data-loading-slide {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
 }
 
 .content-area {

@@ -36,6 +36,7 @@ jobs:
               npm run build
             fi
 
+            php artisan storage:link --force
             php artisan config:clear
             php artisan route:clear
             php artisan view:clear

@@ -85,7 +85,7 @@ class Document extends Model
             return null;
         }
 
-        return asset('storage/'.$this->file_path);
+        return '/storage/'.$this->file_path;
     }
 
     public function alertWindow(): ?string

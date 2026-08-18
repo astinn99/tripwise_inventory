@@ -11,7 +11,6 @@ export const Procurement = () => {
     setModalData,
     searchQuery,
     sendProcurementToVendors,
-    actionLoading
   } = useApp();
 
   const filteredPRs = procurementRequests.filter(pr => {
@@ -114,7 +113,6 @@ export const Procurement = () => {
                             </button>
                             <button
                               type="button"
-                              disabled={actionLoading}
                               onClick={() => sendProcurementToVendors(pr.id)}
                               className="btn btn-primary btn-sm"
                               title="Send this RFQ to vendor portals"

@@ -23,6 +23,31 @@ export function setAuthToken(token, portal = currentPortal()) {
     }
 
     localStorage.removeItem(TOKEN_KEYS[portal]);
+    setCachedUser(null, portal);
+    clearBootstrapCache(portal);
+}
+
+const USER_KEYS = {
+    internal: 'tripwise_internal_user',
+    vendor: 'tripwise_vendor_user',
+};
+
+export function getCachedUser(portal = currentPortal()) {
+    try {
+        const raw = localStorage.getItem(USER_KEYS[portal]);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+export function setCachedUser(user, portal = currentPortal()) {
+    if (user) {
+        localStorage.setItem(USER_KEYS[portal], JSON.stringify(user));
+        return;
+    }
+
+    localStorage.removeItem(USER_KEYS[portal]);
 }
 
 export class ApiError extends Error {
@@ -51,9 +76,57 @@ export function resetCsrf() {
     csrfReady = false;
 }
 
-async function request(path, options = {}) {
-    await ensureCsrf();
+let bootstrapRequest = null;
 
+export function invalidateBootstrap() {
+    bootstrapRequest = null;
+}
+
+const BOOTSTRAP_CACHE_PREFIX = 'tripwise_bootstrap_';
+
+export function readBootstrapCache(portal = currentPortal()) {
+    try {
+        const raw = localStorage.getItem(BOOTSTRAP_CACHE_PREFIX + portal);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+export function writeBootstrapCache(portal, data) {
+    try {
+        localStorage.setItem(BOOTSTRAP_CACHE_PREFIX + portal, JSON.stringify(data));
+    } catch {
+        // Ignore quota errors.
+    }
+}
+
+export function clearBootstrapCache(portal = currentPortal()) {
+    localStorage.removeItem(BOOTSTRAP_CACHE_PREFIX + portal);
+}
+
+export function getBootstrap(options = {}) {
+    const { fresh = false, ...requestOptions } = options;
+    if (fresh) {
+        invalidateBootstrap();
+    }
+
+    if (!bootstrapRequest) {
+        bootstrapRequest = request('/api/bootstrap', requestOptions).finally(() => {
+            window.setTimeout(() => {
+                bootstrapRequest = null;
+            }, 50);
+        });
+    }
+
+    return bootstrapRequest;
+}
+
+export function getBootstrapMore(options = {}) {
+    return request('/api/bootstrap?phase=more', options);
+}
+
+async function request(path, options = {}) {
     const token = getAuthToken(options.portal || currentPortal());
     const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers = {
@@ -65,16 +138,29 @@ async function request(path, options = {}) {
         ...options.headers,
     };
 
-    const { portal, ...fetchOptions } = options;
+    const { portal, timeout = 12000, ...fetchOptions } = options;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeout);
 
-    const response = await fetch(path, {
-        credentials: 'include',
-        ...fetchOptions,
-        headers,
-        body: options.body === undefined
-            ? undefined
-            : (isFormData ? options.body : JSON.stringify(options.body)),
-    });
+    let response;
+    try {
+        response = await fetch(path, {
+            credentials: 'include',
+            ...fetchOptions,
+            signal: fetchOptions.signal ?? controller.signal,
+            headers,
+            body: options.body === undefined
+                ? undefined
+                : (isFormData ? options.body : JSON.stringify(options.body)),
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new ApiError('The server took too long to respond. Check the database connection.', 408);
+        }
+        throw error;
+    } finally {
+        window.clearTimeout(timer);
+    }
 
     if (response.status === 204) {
         return null;

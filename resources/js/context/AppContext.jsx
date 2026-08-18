@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api, ApiError, getAuthToken, resetCsrf, setAuthToken } from '../services/api';
+import { api, ApiError, getAuthToken, getBootstrap, getBootstrapMore, getCachedUser, invalidateBootstrap, readBootstrapCache, resetCsrf, setAuthToken, setCachedUser, writeBootstrapCache } from '../services/api';
 import { createEcho } from '../echo';
 
 const AppContext = createContext();
@@ -24,6 +24,38 @@ const emptyCollections = {
     lowStockTrend: [],
 };
 
+const collectionKeys = Object.keys(emptyCollections);
+
+const MORE_TABS = new Set([
+    'storage_locations',
+    'stock_count',
+    'inventory_movements',
+    'releases',
+    'documents',
+    'expiring_documents',
+    'reports',
+    'purchase_orders',
+    'items',
+    'receiving',
+    'inspection',
+]);
+
+const hydrateCollections = () => {
+    const initialPortal = window.location.pathname.startsWith('/vendor') ? 'vendor' : 'internal';
+    const cached = readBootstrapCache(initialPortal);
+    if (!cached) {
+        return emptyCollections;
+    }
+
+    const next = { ...emptyCollections };
+    collectionKeys.forEach((key) => {
+        if (Array.isArray(cached[key])) {
+            next[key] = cached[key];
+        }
+    });
+    return next;
+};
+
 const withoutToken = (payload) => {
     if (!payload) {
         return null;
@@ -40,16 +72,25 @@ export const AppProvider = ({ children }) => {
 
     const [activeTab, setActiveTab] = useState('dashboard');
     const [searchQuery, setSearchQuery] = useState('');
-    const [internalUser, setInternalUser] = useState(null);
-    const [vendorUser, setVendorUser] = useState(null);
-    const [bootLoading, setBootLoading] = useState(true);
+    const [internalUser, setInternalUser] = useState(() => getCachedUser('internal'));
+    const [vendorUser, setVendorUser] = useState(() => getCachedUser('vendor'));
+    const [bootLoading, setBootLoading] = useState(() => {
+        const initialPortal = window.location.pathname.startsWith('/vendor') ? 'vendor' : 'internal';
+        return Boolean(getAuthToken(initialPortal)) && !getCachedUser(initialPortal);
+    });
+    const [collectionsLoading, setCollectionsLoading] = useState(false);
     const [bootError, setBootError] = useState('');
     const [actionError, setActionError] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
-    const [collections, setCollections] = useState(emptyCollections);
+    const [collections, setCollections] = useState(hydrateCollections);
     const [activeModal, setActiveModal] = useState(null);
     const [modalData, setModalData] = useState(null);
     const echoRef = useRef(null);
+    const loadCollectionsRef = useRef(null);
+    const reloadTimerRef = useRef(null);
+    const moreRequestedRef = useRef(false);
+    const coreReadyRef = useRef(false);
+    const liveStampRef = useRef('');
 
     const user = isVendorPortal ? vendorUser : internalUser;
 
@@ -73,92 +114,95 @@ export const AppProvider = ({ children }) => {
         }
 
         setPortalUser(nextUser, targetPortal);
+        setCachedUser(nextUser, targetPortal);
         return nextUser;
     };
 
-    const loadCollections = async (currentUser = user) => {
-        if (!currentUser) {
+    const applyBootstrapPayload = (data, actor) => {
+        if (!data || typeof data !== 'object') {
+            return;
+        }
+
+        const hasCollections = collectionKeys.some((key) => Object.prototype.hasOwnProperty.call(data, key));
+        if (!hasCollections) {
+            return;
+        }
+
+        if (actor.role === 'supplier') {
+            setCollections((previous) => ({
+                ...previous,
+                quotations: data.quotations ?? previous.quotations,
+                purchaseOrders: data.purchaseOrders ?? previous.purchaseOrders,
+                opportunities: data.opportunities ?? previous.opportunities,
+                notifications: data.notifications ?? previous.notifications,
+            }));
+            return;
+        }
+
+        setCollections((previous) => {
+            const next = { ...previous };
+            collectionKeys.forEach((key) => {
+                if (Object.prototype.hasOwnProperty.call(data, key) && data[key] !== undefined) {
+                    next[key] = data[key];
+                }
+            });
+            return next;
+        });
+    };
+
+    const loadCollections = async (currentUser, { fresh = false, silent = false } = {}) => {
+        const actor = currentUser ?? user;
+        if (!actor) {
             setCollections(emptyCollections);
             return;
         }
 
-        if (currentUser.role === 'supplier') {
-            const [quotations, purchaseOrders, opportunities, notifications] = await Promise.all([
-                api.get('/api/quotations'),
-                api.get('/api/purchase-orders'),
-                api.get('/api/opportunities'),
-                api.get('/api/notifications'),
-            ]);
-            setCollections({
-                ...emptyCollections,
-                quotations: quotations || [],
-                purchaseOrders: purchaseOrders || [],
-                opportunities: opportunities || [],
-                notifications: notifications || [],
-            });
+        const cachePortal = actor.role === 'supplier' ? 'vendor' : 'internal';
+        const cached = readBootstrapCache(cachePortal);
+        if (cached && !fresh) {
+            applyBootstrapPayload(cached, actor);
+        } else if (!silent) {
+            setCollectionsLoading(true);
+        }
+
+        try {
+            const data = await getBootstrap({ portal, fresh: true });
+            applyBootstrapPayload(data, actor);
+            writeBootstrapCache(cachePortal, { ...(cached || {}), ...data });
+
+            if (actor.role !== 'supplier' && MORE_TABS.has(activeTab)) {
+                loadMoreCollections(actor);
+            }
+        } finally {
+            coreReadyRef.current = true;
+            setCollectionsLoading(false);
+        }
+    };
+
+    const loadMoreCollections = (currentUser) => {
+        const actor = currentUser ?? user;
+        if (!actor || actor.role === 'supplier' || moreRequestedRef.current) {
             return;
         }
 
-        const [
-            inventory,
-            supplyRequests,
-            procurementRequests,
-            quotations,
-            purchaseOrders,
-            suppliers,
-            deliveries,
-            storageLocations,
-            releases,
-            movements,
-            stockCounts,
-            documents,
-            notifications,
-            opportunities,
-            dashboard,
-        ] = await Promise.all([
-            api.get('/api/inventory-items'),
-            api.get('/api/supply-requests'),
-            api.get('/api/procurement-requests'),
-            api.get('/api/quotations'),
-            api.get('/api/purchase-orders'),
-            api.get('/api/suppliers'),
-            api.get('/api/deliveries'),
-            api.get('/api/storage-locations'),
-            api.get('/api/releases'),
-            api.get('/api/inventory-movements'),
-            api.get('/api/stock-counts'),
-            api.get('/api/documents'),
-            api.get('/api/notifications'),
-            api.get('/api/opportunities'),
-            api.get('/api/dashboard'),
-        ]);
-
-        setCollections({
-            inventory: inventory || [],
-            supplyRequests: supplyRequests || [],
-            procurementRequests: procurementRequests || [],
-            quotations: quotations || [],
-            purchaseOrders: purchaseOrders || [],
-            suppliers: suppliers || [],
-            deliveries: deliveries || [],
-            storageLocations: storageLocations || [],
-            releases: releases || [],
-            movements: movements || [],
-            stockCounts: stockCounts || [],
-            documents: documents || [],
-            notifications: notifications || [],
-            opportunities: opportunities || [],
-            movementTrend: dashboard?.movementTrend || [],
-            lowStockTrend: dashboard?.lowStockTrend || [],
-        });
+        moreRequestedRef.current = true;
+        void getBootstrapMore({ portal: 'internal' })
+            .then((more) => {
+                applyBootstrapPayload(more, actor);
+                writeBootstrapCache('internal', { ...(readBootstrapCache('internal') || {}), ...more });
+            })
+            .catch(() => {
+                moreRequestedRef.current = false;
+            });
     };
+
+    loadCollectionsRef.current = loadCollections;
 
     const runAction = async (callback) => {
         setActionError('');
         setActionLoading(true);
         try {
             const result = await callback();
-            await loadCollections();
             return result;
         } catch (error) {
             if (error instanceof ApiError && error.status === 401) {
@@ -177,34 +221,40 @@ export const AppProvider = ({ children }) => {
         let cancelled = false;
 
         const bootstrap = async () => {
-            setBootLoading(true);
             setBootError('');
-            setCollections(emptyCollections);
 
             if (!getAuthToken(portal)) {
                 setPortalUser(null, portal);
+                setCachedUser(null, portal);
+                setCollections(emptyCollections);
                 setBootLoading(false);
                 return;
+            }
+
+            const cached = getCachedUser(portal);
+            if (cached) {
+                applyUser(cached, portal);
+                setBootLoading(false);
+                void loadCollections(cached);
             }
 
             try {
                 const current = await api.get('/api/user', { portal });
                 if (cancelled) return;
                 const nextUser = applyUser(current, portal);
-                if (nextUser) {
-                    await loadCollections(nextUser);
+                setBootLoading(false);
+                if (nextUser && !cached) {
+                    void loadCollections(nextUser);
                 }
             } catch (error) {
                 if (cancelled) return;
+                setBootLoading(false);
                 if (error instanceof ApiError && error.status === 401) {
                     setAuthToken('', portal);
                     setPortalUser(null, portal);
-                } else {
+                    setCollections(emptyCollections);
+                } else if (!cached) {
                     setBootError(error.message || 'Unable to load the application.');
-                }
-            } finally {
-                if (!cancelled) {
-                    setBootLoading(false);
                 }
             }
         };
@@ -222,47 +272,130 @@ export const AppProvider = ({ children }) => {
             return undefined;
         }
 
-        const echo = createEcho();
-        echoRef.current = echo;
-        if (!echo) {
-            return undefined;
-        }
+        let cancelled = false;
 
-        echo.private('supply-chain')
-            .listen('.notification.created', (event) => {
-                if (event.notification) {
+        const scheduleReload = () => {
+            clearTimeout(reloadTimerRef.current);
+            reloadTimerRef.current = setTimeout(() => {
+                loadCollectionsRef.current?.(undefined, { fresh: true, silent: true });
+            }, 400);
+        };
+
+        const setupEcho = async () => {
+            const echo = await createEcho();
+            if (cancelled || !echo) {
+                echo?.disconnect();
+                return;
+            }
+
+            echoRef.current = echo;
+            echo.private('supply-chain')
+                .listen('.notification.created', (event) => {
+                    if (event.notification) {
+                        setCollections((prev) => ({
+                            ...prev,
+                            notifications: [event.notification, ...prev.notifications.filter((item) => item.id !== event.notification.id)],
+                        }));
+                    }
+                })
+                .listen('.quotation.submitted', (event) => {
+                    const quote = event.quotation;
+                    if (!quote) {
+                        scheduleReload();
+                        return;
+                    }
                     setCollections((prev) => ({
                         ...prev,
-                        notifications: [event.notification, ...prev.notifications.filter((item) => item.id !== event.notification.id)],
+                        quotations: [quote, ...prev.quotations.filter((item) => item.id !== quote.id)],
+                        procurementRequests: prev.procurementRequests.map((pr) => (
+                            pr.id === quote.procurementId
+                                ? { ...pr, status: 'Evaluation', canEdit: false, sentToVendors: true }
+                                : pr
+                        )),
                     }));
-                }
-            })
-            .listen('.stock.updated', () => {
-                loadCollections();
-            })
-            .listen('.purchase-order.updated', () => {
-                loadCollections();
-            })
-            .listen('.quotation.submitted', () => {
-                loadCollections();
-            })
-            .listen('.opportunity.published', () => {
-                loadCollections();
-            });
+                })
+                .listen('.opportunity.published', () => {
+                    void api.get('/api/opportunities', { portal }).then((opportunities) => {
+                        setCollections((prev) => ({ ...prev, opportunities: opportunities || [] }));
+                    }).catch(() => {});
+                })
+                .listen('.stock.updated', scheduleReload)
+                .listen('.purchase-order.updated', scheduleReload);
+        };
+
+        setupEcho();
 
         return () => {
-            echo.leave('supply-chain');
-            echo.disconnect();
+            cancelled = true;
+            clearTimeout(reloadTimerRef.current);
+            echoRef.current?.leave('supply-chain');
+            echoRef.current?.disconnect();
             echoRef.current = null;
         };
     }, [user?.id]);
+
+    useEffect(() => {
+        if (!user) {
+            liveStampRef.current = '';
+            coreReadyRef.current = false;
+            return undefined;
+        }
+
+        let cancelled = false;
+        let inFlight = false;
+        let intervalId = 0;
+
+        const syncLive = async () => {
+            if (cancelled || document.hidden || inFlight || !coreReadyRef.current) {
+                return;
+            }
+
+            inFlight = true;
+            try {
+                const stamp = encodeURIComponent(liveStampRef.current || '');
+                const data = await api.get(`/api/live?stamp=${stamp}`, { portal, timeout: 8000 });
+                if (cancelled || !data) {
+                    return;
+                }
+                if (data.stamp) {
+                    liveStampRef.current = data.stamp;
+                }
+                applyBootstrapPayload(data, user);
+                if (collectionKeys.some((key) => Object.prototype.hasOwnProperty.call(data, key))) {
+                    writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...data, stamp: undefined });
+                }
+            } catch {
+                // Keep the current screen if a live poll fails.
+            } finally {
+                inFlight = false;
+            }
+        };
+
+        const startId = window.setTimeout(() => {
+            void syncLive();
+            intervalId = window.setInterval(syncLive, 2500);
+        }, 1200);
+
+        document.addEventListener('visibilitychange', syncLive);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(startId);
+            window.clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', syncLive);
+        };
+    }, [user?.id, portal]);
 
     const login = async (email, password, targetPortal = portal) => {
         resetCsrf();
         const payload = await api.post('/api/login', { email, password, portal: targetPortal }, { portal: targetPortal });
         setAuthToken(payload.token, targetPortal);
+        invalidateBootstrap();
+        moreRequestedRef.current = false;
+        liveStampRef.current = '';
+        coreReadyRef.current = false;
         const current = applyUser(withoutToken(payload), targetPortal);
-        await loadCollections(current);
+        void loadCollections(current, { fresh: true });
         return current;
     };
 
@@ -277,6 +410,9 @@ export const AppProvider = ({ children }) => {
             setPortalUser(null, portal);
             setCollections(emptyCollections);
             setActiveTab('dashboard');
+            moreRequestedRef.current = false;
+            liveStampRef.current = '';
+            coreReadyRef.current = false;
         }
     };
 
@@ -411,8 +547,46 @@ export const AppProvider = ({ children }) => {
     const updateProcurementRequest = (prId, data) =>
         runAction(() => api.put(`/api/procurement-requests/${prId}`, data));
 
-    const sendProcurementToVendors = (procurementId) =>
-        runAction(() => api.post(`/api/procurement-requests/${procurementId}/send-to-vendors`));
+    const sendProcurementToVendors = async (procurementId) => {
+        setActionError('');
+        const snapshot = collections.procurementRequests;
+
+        setCollections((previous) => ({
+            ...previous,
+            procurementRequests: previous.procurementRequests.map((item) => (
+                item.id === procurementId
+                    ? { ...item, status: 'Quotation', canEdit: false, sentToVendors: true }
+                    : item
+            )),
+        }));
+
+        try {
+            const pr = await api.post(`/api/procurement-requests/${procurementId}/send-to-vendors`);
+            setCollections((previous) => {
+                const next = {
+                    ...previous,
+                    procurementRequests: previous.procurementRequests.map((item) => (
+                        item.id === procurementId || item.id === pr?.id ? { ...item, ...pr } : item
+                    )),
+                };
+                writeBootstrapCache('internal', { ...(readBootstrapCache('internal') || {}), ...next });
+                return next;
+            });
+            return pr;
+        } catch (error) {
+            setCollections((previous) => ({
+                ...previous,
+                procurementRequests: snapshot,
+            }));
+            if (error instanceof ApiError && error.status === 401) {
+                setAuthToken('', portal);
+                setPortalUser(null, portal);
+                setCollections(emptyCollections);
+            }
+            setActionError(error.message || 'Request failed');
+            throw error;
+        }
+    };
 
     const markNotificationRead = (id) =>
         runAction(() => api.post(`/api/notifications/${id}/read`));
@@ -420,15 +594,23 @@ export const AppProvider = ({ children }) => {
     const markAllNotificationsRead = () =>
         runAction(() => api.post('/api/notifications/read-all'));
 
+    const openTab = (tab) => {
+        setActiveTab(tab);
+        if (MORE_TABS.has(tab)) {
+            loadMoreCollections();
+        }
+    };
+
     return (
         <AppContext.Provider value={{
             user,
             bootLoading,
+            collectionsLoading,
             bootError,
             actionError,
             actionLoading,
             activeTab,
-            setActiveTab,
+            setActiveTab: openTab,
             searchQuery,
             setSearchQuery,
             ...collections,

@@ -7,21 +7,8 @@ import { VendorPortal } from './pages/VendorPortal';
 import { Login } from './pages/Login';
 
 export function VendorApp() {
-  const { user, bootLoading, bootError, actionError } = useApp();
+  const { user, collectionsLoading, bootError, actionError } = useApp();
   const [vendorTab, setVendorTab] = useState('dashboard');
-
-  if (bootLoading) {
-    return (
-      <div className="login-screen">
-        <div className="login-card">
-          <div className="login-brand">
-            <BrandLogo variant="login" subtitle="Vendor Portal" />
-          </div>
-          <p className="text-sm font-bold">Loading Vendor Portal...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (bootError) {
     return (
@@ -45,6 +32,7 @@ export function VendorApp() {
       <VendorSidebar activeTab={vendorTab} setActiveTab={setVendorTab} />
 
       <div className="main-wrapper">
+        {collectionsLoading ? <div className="data-loading-bar" /> : null}
         <VendorHeader activeTab={vendorTab} />
 
         <main className="main-content">

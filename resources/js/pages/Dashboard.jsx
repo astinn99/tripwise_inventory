@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Package,
@@ -8,7 +8,6 @@ import {
   ClipboardList,
   ShoppingCart,
   FileSpreadsheet,
-  FileCheck,
   DollarSign,
   Truck,
   CheckCircle2,
@@ -16,26 +15,9 @@ import {
   Send,
   ShieldAlert,
   FileText,
-  TrendingUp,
-  Award
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  CartesianGrid,
-  Legend
-} from 'recharts';
+
+const DashboardCharts = lazy(() => import('./DashboardCharts'));
 
 export const Dashboard = () => {
   const {
@@ -100,6 +82,10 @@ export const Dashboard = () => {
     { status: 'Partial Delivery', count: purchaseOrders.filter(p => p.poStatus === 'Partially Delivered').length },
     { status: 'Fully Delivered', count: purchaseOrders.filter(p => p.poStatus === 'Fully Delivered').length }
   ];
+
+  const financeQueue = purchaseOrders
+    .filter((p) => p.poStatus === 'Pending Finance Approval')
+    .slice(0, 8);
 
   const supplierPerfData = suppliers.map(s => ({
     name: s.companyName.split(' ')[0],
@@ -254,128 +240,16 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      {/* Analytics Charts Section */}
-      <div className="grid-2 mb-6">
-        {/* Chart 1: Inventory Overview */}
-        <div className="panel-card">
-          <div className="panel-header">
-            <span className="panel-title"><Package className="w-5 h-5 text-blue" /> Inventory Stock Distribution</span>
-          </div>
-          <div style={{ width: '100%', height: 250 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={inventoryOverviewData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
-                <XAxis dataKey="name" stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <YAxis stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                  {inventoryOverviewData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 2: Inventory Movement Trend */}
-        <div className="panel-card">
-          <div className="panel-header">
-            <span className="panel-title"><TrendingUp className="w-5 h-5 text-success" /> Receiving vs Releasing Activity</span>
-          </div>
-          <div style={{ width: '100%', height: 250 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={movementTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
-                <XAxis dataKey="day" stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <YAxis stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                <Area type="monotone" dataKey="receiving" stroke="#047857" fill="rgba(4, 120, 87, 0.15)" />
-                <Area type="monotone" dataKey="releasing" stroke="#1D4ED8" fill="rgba(29, 78, 216, 0.15)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid-3 mb-6">
-        {/* Chart 3: Procurement Status */}
-        <div className="panel-card">
-          <div className="panel-header">
-            <span className="panel-title"><ShoppingCart className="w-5 h-5 text-blue" /> PSM Sourcing Status</span>
-          </div>
-          <div style={{ width: '100%', height: 230 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={procurementStatusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label>
-                  {procurementStatusData.map((entry, idx) => (
-                    <Cell key={idx} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                <Legend tick={{ fill: '#000000' }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 4: PO Status Breakdown */}
-        <div className="panel-card">
-          <div className="panel-header">
-            <span className="panel-title"><FileCheck className="w-5 h-5 text-blue" /> Purchase Orders Lifecycle</span>
-          </div>
-          <div style={{ width: '100%', height: 230 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={poStatusData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
-                <XAxis type="number" stroke="#000000" tick={{ fill: '#000000' }} />
-                <YAxis dataKey="status" type="category" stroke="#000000" width={100} tick={{ fontSize: 11, fill: '#000000', fontWeight: 700 }} />
-                <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                <Bar dataKey="count" fill="#1D4ED8" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 5: Low Stock Trend */}
-        <div className="panel-card">
-          <div className="panel-header">
-            <span className="panel-title"><AlertTriangle className="w-5 h-5 text-warning" /> Low Stock Trend</span>
-          </div>
-          <div style={{ width: '100%', height: 230 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={lowStockTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
-                <XAxis dataKey="week" stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <YAxis stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                <Line type="monotone" dataKey="count" stroke="#D97706" strokeWidth={2.5} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* Chart 6: Supplier Performance */}
-      <div className="panel-card mb-6">
-        <div className="panel-header">
-          <span className="panel-title"><Award className="w-5 h-5 text-blue" /> Vendor & Supplier Performance Scores</span>
-        </div>
-        <div style={{ width: '100%', height: 250 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={supplierPerfData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
-              <XAxis dataKey="name" stroke="#000000" tick={{ fill: '#000000', fontWeight: 700 }} />
-              <YAxis domain={[60, 100]} stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-              <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-              <Legend />
-              <Bar dataKey="rating" name="Overall Score %" fill="#1D4ED8" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="quality" name="Quality Score %" fill="#047857" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="delivery" name="On-Time Delivery %" fill="#D97706" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <Suspense fallback={null}>
+        <DashboardCharts
+          inventoryOverviewData={inventoryOverviewData}
+          movementTrendData={movementTrendData}
+          procurementStatusData={procurementStatusData}
+          poStatusData={poStatusData}
+          lowStockTrendData={lowStockTrendData}
+          supplierPerfData={supplierPerfData}
+        />
+      </Suspense>
 
       {/* Activity Summary Tables */}
       <div className="grid-2">
@@ -428,7 +302,7 @@ export const Dashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {purchaseOrders.map(po => (
+                {financeQueue.map(po => (
                   <tr key={po.poNumber}>
                     <td className="font-mono text-xs text-blue font-bold">{po.poNumber}</td>
                     <td className="font-bold text-xs text-black">{po.supplier}</td>

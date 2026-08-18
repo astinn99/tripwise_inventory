@@ -56,6 +56,73 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonPath('data.0.imageUrl', null);
     }
 
+    public function test_bootstrap_returns_internal_collections_in_one_request(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->getJson('/api/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'inventory',
+                    'supplyRequests',
+                    'notifications',
+                    'movementTrend',
+                    'lowStockTrend',
+                ],
+            ]);
+    }
+
+    public function test_bootstrap_more_returns_deferred_collections(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->getJson('/api/bootstrap?phase=more')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'storageLocations',
+                    'releases',
+                    'movements',
+                    'stockCounts',
+                ],
+            ]);
+    }
+
+    public function test_live_sync_returns_stamp_until_data_changes(): void
+    {
+        $user = User::factory()->create();
+
+        $stamp = $this->actingAs($user)
+            ->getJson('/api/live')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => ['stamp'],
+            ])
+            ->json('data.stamp');
+
+        $this->assertNotEmpty($stamp);
+        $this->assertArrayNotHasKey('quotations', $this->actingAs($user)->getJson('/api/live')->json('data'));
+
+        $this->actingAs($user)
+            ->getJson('/api/live?stamp=stale')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'stamp',
+                    'quotations',
+                    'notifications',
+                    'procurementRequests',
+                ],
+            ]);
+    }
+
     public function test_check_stock_marks_request_ready_when_stock_is_available(): void
     {
         $user = User::factory()->create();

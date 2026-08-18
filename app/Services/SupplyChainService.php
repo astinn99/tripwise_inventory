@@ -25,6 +25,7 @@ use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
 use App\Support\DocumentCode;
+use App\Support\SafeBroadcast;
 use App\Support\WarrantyDuration;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -1006,7 +1007,7 @@ class SupplyChainService
             'success'
         );
 
-        $resource = (new QuotationResource($quote->load(['procurementRequest', 'supplier'])))->resolve();
+        $resource = (new QuotationResource($quote->load(['procurementRequest.catalogItem', 'supplier'])))->resolve();
         $this->broadcastSafely(new QuotationSubmitted($resource));
 
         return $quote->fresh(['procurementRequest', 'supplier']);
@@ -1049,7 +1050,7 @@ class SupplyChainService
             $this->storeWarrantyFile($quote, $warrantyFile);
         }
 
-        $quote = $quote->fresh(['procurementRequest', 'supplier']);
+        $quote = $quote->fresh(['procurementRequest.catalogItem', 'supplier']);
 
         $this->notifications->create(
             'Quotation Updated',
@@ -1139,55 +1140,68 @@ class SupplyChainService
     {
         $suppliers = Supplier::query()
             ->where('status', 'Active')
-            ->with('users')
+            ->with('users:id,supplier_id')
             ->get();
 
-        $invited = 0;
+        $alreadySent = SupplierOpportunity::query()
+            ->where('procurement_request_id', $pr->id)
+            ->pluck('supplier_id')
+            ->all();
+
+        $newSuppliers = $suppliers->reject(fn (Supplier $supplier) => in_array($supplier->id, $alreadySent, true))->values();
+
+        if ($newSuppliers->isEmpty()) {
+            return 0;
+        }
+
+        $now = now();
+        $deadline = $now->copy()->addDays(10)->toDateString();
         $requirements = trim(implode(' ', array_filter([
             "Please submit a quotation for {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
             $pr->reason,
         ])));
+        $budgetRange = $pr->estimated_cost
+            ? '₱'.number_format((float) $pr->estimated_cost, 2)
+            : 'TBD';
+        $codes = DocumentCode::nextMany('supplier_opportunities', 'opportunity_number', 'OPP', $newSuppliers->count());
+        $rows = [];
 
-        foreach ($suppliers as $supplier) {
-            $alreadySent = SupplierOpportunity::query()
-                ->where('procurement_request_id', $pr->id)
-                ->where('supplier_id', $supplier->id)
-                ->exists();
-
-            if ($alreadySent) {
-                continue;
-            }
-
-            SupplierOpportunity::query()->create([
-                'opportunity_number' => DocumentCode::next('supplier_opportunities', 'opportunity_number', 'OPP'),
+        foreach ($newSuppliers as $index => $supplier) {
+            $rows[] = [
+                'opportunity_number' => $codes[$index],
                 'pr_number' => $pr->pr_number,
                 'procurement_request_id' => $pr->id,
                 'supplier_id' => $supplier->id,
                 'title' => $pr->item_name,
                 'category' => $category,
                 'quantity' => $pr->quantity,
-                'deadline' => now()->addDays(10)->toDateString(),
-                'budget_range' => $pr->estimated_cost
-                    ? '₱'.number_format((float) $pr->estimated_cost, 2)
-                    : 'TBD',
+                'deadline' => $deadline,
+                'budget_range' => $budgetRange,
                 'status' => 'Open for Quotation',
                 'requirements' => $requirements,
-            ]);
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
 
-            $invited++;
+        SupplierOpportunity::query()->insert($rows);
 
+        $vendorNotes = [];
+        foreach ($newSuppliers as $supplier) {
             foreach ($supplier->users as $vendorUser) {
-                $this->notifications->create(
-                    'New RFQ Available',
-                    "{$pr->pr_number}: quote {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
-                    'procurement',
-                    'info',
-                    $vendorUser->id
-                );
+                $vendorNotes[] = [
+                    'title' => 'New RFQ Available',
+                    'message' => "{$pr->pr_number}: quote {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
+                    'type' => 'procurement',
+                    'severity' => 'info',
+                    'user_id' => $vendorUser->id,
+                ];
             }
         }
 
-        return $invited;
+        $this->notifications->createMany($vendorNotes);
+
+        return $newSuppliers->count();
     }
 
     private function resolveStorageLocationId(array $data, ?InventoryItem $existing): ?int
@@ -1259,11 +1273,7 @@ class SupplyChainService
 
     private function broadcastSafely(object $event): void
     {
-        try {
-            broadcast($event)->toOthers();
-        } catch (\Throwable) {
-            // Broadcasting is optional during tests and local bootstrap.
-        }
+        SafeBroadcast::later($event);
     }
 
     public function archiveDocument(array $data, ?UploadedFile $file = null): Document

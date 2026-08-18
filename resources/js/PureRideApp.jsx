@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { VendorApp } from './VendorApp';
@@ -19,7 +19,6 @@ import { PurchaseOrders } from './pages/PurchaseOrders';
 import { Quotations } from './pages/Quotations';
 import { Receiving } from './pages/Receiving';
 import { Releases } from './pages/Releases';
-import { Reports } from './pages/Reports';
 import { StockCount } from './pages/StockCount';
 import { StockMonitoring } from './pages/StockMonitoring';
 import { StorageLocations } from './pages/StorageLocations';
@@ -42,6 +41,8 @@ import './index.css';
 import './styles/custom.css';
 import './styles/layout.css';
 import './styles/ui.css';
+
+const Reports = lazy(() => import('./pages/Reports').then((module) => ({ default: module.Reports })));
 
 const pageMap = {
     dashboard: Dashboard,
@@ -67,26 +68,13 @@ const pageMap = {
 function InternalApp() {
     const {
         user,
-        bootLoading,
+        collectionsLoading,
         bootError,
         actionError,
         activeTab,
         activeModal,
         setActiveModal,
     } = useApp();
-
-    if (bootLoading) {
-        return (
-            <div className="login-screen">
-                <div className="login-card">
-                    <div className="login-brand">
-                        <BrandLogo variant="login" subtitle="Supply Chain" />
-                    </div>
-                    <p className="text-sm font-bold">Loading...</p>
-                </div>
-            </div>
-        );
-    }
 
     if (bootError) {
         return (
@@ -112,6 +100,7 @@ function InternalApp() {
             <Sidebar />
 
             <div className="main-wrapper">
+                {collectionsLoading ? <div className="data-loading-bar" /> : null}
                 <Header />
 
                 <main className="main-content">
@@ -120,7 +109,9 @@ function InternalApp() {
                             <p className="text-xs font-bold">{actionError}</p>
                         </div>
                     )}
-                    <CurrentPage />
+                    <Suspense fallback={null}>
+                        <CurrentPage />
+                    </Suspense>
                 </main>
             </div>
 

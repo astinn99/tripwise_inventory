@@ -10,4 +10,7 @@ export default defineConfig({
         }),
         react(),
     ],
+    optimizeDeps: {
+        include: ['recharts', 'lucide-react', 'react', 'react-dom', 'react-router-dom'],
+    },
 });

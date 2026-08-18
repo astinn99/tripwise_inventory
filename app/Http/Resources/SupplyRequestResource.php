@@ -25,10 +25,10 @@ class SupplyRequestResource extends JsonResource
             'requestedBy' => $this->requested_by,
             'purpose' => $this->purpose,
             'dateReceived' => optional($this->date_received)?->format('Y-m-d'),
-            'actionLogs' => $this->logs->map(fn ($log) => [
+            'actionLogs' => $this->whenLoaded('logs', fn () => $this->logs->map(fn ($log) => [
                 'date' => $log->logged_at,
                 'note' => $log->note,
-            ])->values(),
+            ])->values(), []),
         ];
     }
 }

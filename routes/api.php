@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BootstrapController;
+use App\Http\Controllers\Api\LiveSyncController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\DocumentController;
@@ -32,6 +34,8 @@ Route::middleware('department')->prefix('department')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'user']);
+    Route::get('/bootstrap', BootstrapController::class);
+    Route::get('/live', LiveSyncController::class);
 
     Route::get('/quotations', [QuotationController::class, 'index']);
     Route::post('/quotations', [QuotationController::class, 'store']);

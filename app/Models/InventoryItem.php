@@ -77,6 +77,6 @@ class InventoryItem extends Model
             return null;
         }
 
-        return asset('storage/'.$this->image_path);
+        return '/storage/'.$this->image_path;
     }
 }
