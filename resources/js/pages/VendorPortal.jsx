@@ -175,9 +175,10 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     e.preventDefault();
     if (!selectedOpp && !editingQuote) return;
 
-    try {
+      closeQuoteModal();
+      setActiveTab('my_quotes');
       if (editingQuote) {
-        await updateSupplierQuotation(editingQuote.id, {
+        void updateSupplierQuotation(editingQuote.id, {
           unitPrice: Number(quoteForm.unitPrice),
           warrantyMonths: Number(quoteForm.warrantyMonths),
           warranty: quoteForm.warranty,
@@ -187,7 +188,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           notes: quoteForm.notes,
         });
       } else {
-        await submitSupplierQuotation({
+        void submitSupplierQuotation({
           procurementId: selectedOpp.prNumber,
           supplierId: user?.supplierId,
           supplierName: user?.supplierName,
@@ -204,12 +205,6 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           notes: quoteForm.notes,
         });
       }
-
-      closeQuoteModal();
-      setActiveTab('my_quotes');
-    } catch {
-      // Action error is shown by AppContext.
-    }
   };
 
   const quoteTarget = editingQuote || selectedOpp;

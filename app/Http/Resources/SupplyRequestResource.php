@@ -29,6 +29,32 @@ class SupplyRequestResource extends JsonResource
                 'date' => $log->logged_at,
                 'note' => $log->note,
             ])->values(), []),
+            'createdProcurement' => $this->when(
+                $this->relationLoaded('procurementRequests') && $this->procurementRequests->isNotEmpty(),
+                function () {
+                    $pr = $this->procurementRequests->sortByDesc('id')->first();
+
+                    return [
+                        'id' => $pr->pr_number,
+                        'sourceRequest' => $pr->source_request,
+                        'department' => $pr->department,
+                        'itemCode' => $pr->item_code,
+                        'itemName' => $pr->item_name,
+                        'imageUrl' => $this->catalogItem?->imageUrl() ?? $this->inventoryItem?->imageUrl(),
+                        'quantity' => $pr->quantity,
+                        'reason' => $pr->reason,
+                        'priority' => $pr->priority,
+                        'status' => $pr->status,
+                        'dateCreated' => optional($pr->date_created)?->format('Y-m-d'),
+                        'estimatedCost' => (float) $pr->estimated_cost,
+                        'selectedSupplier' => $pr->selected_supplier,
+                        'poNumber' => $pr->po_number,
+                        'vendorInviteCount' => 0,
+                        'canEdit' => true,
+                        'sentToVendors' => false,
+                    ];
+                }
+            ),
         ];
     }
 }

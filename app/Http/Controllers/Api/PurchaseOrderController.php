@@ -34,7 +34,7 @@ class PurchaseOrderController extends Controller
         }
 
         $po = $service->updateFinanceApproval(
-            $purchaseOrder->load('timeline', 'procurementRequest'),
+            $purchaseOrder,
             $request->validated('status'),
             (string) ($request->validated('remarks') ?? ''),
             $request->user()
@@ -53,7 +53,7 @@ class PurchaseOrderController extends Controller
             return $this->fail('You are not allowed to confirm this purchase order.', 403);
         }
 
-        $po = $service->supplierConfirmPO($purchaseOrder->load(['timeline', 'items']));
+        $po = $service->supplierConfirmPO($purchaseOrder->loadMissing('items'));
 
         return $this->ok(new PurchaseOrderResource($po), 'Purchase order confirmed');
     }

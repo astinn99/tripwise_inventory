@@ -56,6 +56,100 @@ const hydrateCollections = () => {
     return next;
 };
 
+const mergeDefined = (existing, incoming) => {
+    if (!incoming) {
+        return existing;
+    }
+
+    const next = { ...existing };
+    Object.entries(incoming).forEach(([key, value]) => {
+        if (value === undefined || value === null) {
+            return;
+        }
+        if (Array.isArray(value) && value.length === 0 && Array.isArray(existing?.[key]) && existing[key].length > 0) {
+            return;
+        }
+        next[key] = value;
+    });
+    return next;
+};
+
+const ID_KEYS = {
+    inventory: 'id',
+    supplyRequests: 'id',
+    procurementRequests: 'id',
+    quotations: 'id',
+    purchaseOrders: 'poNumber',
+    suppliers: 'id',
+    deliveries: 'id',
+    storageLocations: 'id',
+    releases: 'id',
+    movements: 'id',
+    stockCounts: 'id',
+    documents: 'id',
+    notifications: 'id',
+    opportunities: 'id',
+};
+
+const upsertList = (list, record, idKey) => {
+    if (!record || record[idKey] === undefined || record[idKey] === null) {
+        return list;
+    }
+
+    const index = list.findIndex((item) => item[idKey] === record[idKey]);
+    if (index === -1) {
+        return [record, ...list];
+    }
+
+    return list.map((item, i) => (i === index ? mergeDefined(item, record) : item));
+};
+
+const detectCollection = (record) => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        return null;
+    }
+    if (record.poNumber && record.poStatus) {
+        return 'purchaseOrders';
+    }
+    if (record.itemsDelivered !== undefined || (record.poNumber && record.trackingNumber !== undefined && !record.poStatus)) {
+        return 'deliveries';
+    }
+    if (record.unitPrice !== undefined && record.supplierName !== undefined) {
+        return 'quotations';
+    }
+    if (record.quantityRequested !== undefined) {
+        return 'supplyRequests';
+    }
+    if (record.sentToVendors !== undefined || record.vendorInviteCount !== undefined) {
+        return 'procurementRequests';
+    }
+    if (record.minStockLevel !== undefined && record.itemCode) {
+        return 'inventory';
+    }
+    if (record.rack !== undefined && record.bin !== undefined) {
+        return 'storageLocations';
+    }
+    if (record.releasedTo !== undefined && record.requestId) {
+        return 'releases';
+    }
+    if (record.movementType) {
+        return 'movements';
+    }
+    if (record.daysRemaining !== undefined || record.expirationDate !== undefined) {
+        return 'documents';
+    }
+    if (record.totalItemsAudited !== undefined || (record.title && record.discrepancyCount !== undefined)) {
+        return 'stockCounts';
+    }
+    if (record.read !== undefined && record.timestamp !== undefined) {
+        return 'notifications';
+    }
+    if (record.prNumber && record.deadline !== undefined) {
+        return 'opportunities';
+    }
+    return null;
+};
+
 const withoutToken = (payload) => {
     if (!payload) {
         return null;
@@ -87,10 +181,10 @@ export const AppProvider = ({ children }) => {
     const [modalData, setModalData] = useState(null);
     const echoRef = useRef(null);
     const loadCollectionsRef = useRef(null);
-    const reloadTimerRef = useRef(null);
     const moreRequestedRef = useRef(false);
     const coreReadyRef = useRef(false);
-    const liveStampRef = useRef('');
+    const liveStampsRef = useRef({});
+    const livePauseUntilRef = useRef(0);
 
     const user = isVendorPortal ? vendorUser : internalUser;
 
@@ -198,13 +292,84 @@ export const AppProvider = ({ children }) => {
 
     loadCollectionsRef.current = loadCollections;
 
-    const runAction = async (callback) => {
+    const commitCollections = (updater) => {
+        setCollections((prev) => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...next });
+            return next;
+        });
+    };
+
+    const ingestResult = (result) => {
+        if (result == null) {
+            return;
+        }
+
+        if (Array.isArray(result)) {
+            if (result.length === 0) {
+                return;
+            }
+            const collection = detectCollection(result[0]);
+            if (!collection) {
+                return;
+            }
+            if (collection === 'storageLocations') {
+                commitCollections((prev) => ({ ...prev, storageLocations: result }));
+                return;
+            }
+            commitCollections((prev) => {
+                let next = prev;
+                result.forEach((record) => {
+                    next = {
+                        ...next,
+                        [collection]: upsertList(next[collection], record, ID_KEYS[collection]),
+                    };
+                });
+                return next;
+            });
+            return;
+        }
+
+        if (typeof result !== 'object') {
+            return;
+        }
+
+        const { createdProcurement, ...record } = result;
+        const collection = detectCollection(record);
+        if (collection) {
+            const idKey = ID_KEYS[collection];
+            commitCollections((prev) => ({
+                ...prev,
+                [collection]: upsertList(prev[collection], record, idKey)
+                    .filter((item) => item[idKey] === record[idKey] || !String(item[idKey] || '').startsWith('tmp-')),
+            }));
+        }
+        if (createdProcurement) {
+            commitCollections((prev) => ({
+                ...prev,
+                procurementRequests: upsertList(prev.procurementRequests, createdProcurement, 'id'),
+            }));
+        }
+    };
+
+    const runAction = async (callback, { optimistic, onSuccess } = {}) => {
         setActionError('');
+        livePauseUntilRef.current = Date.now() + 10000;
+        const snapshot = optimistic ? { ...collections } : null;
+        if (optimistic) {
+            commitCollections(optimistic);
+        }
         setActionLoading(true);
         try {
             const result = await callback();
+            ingestResult(result);
+            onSuccess?.(result);
             return result;
         } catch (error) {
+            if (snapshot) {
+                setCollections(snapshot);
+                writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...snapshot });
+            }
             if (error instanceof ApiError && error.status === 401) {
                 setAuthToken('', portal);
                 setPortalUser(null, portal);
@@ -274,13 +439,6 @@ export const AppProvider = ({ children }) => {
 
         let cancelled = false;
 
-        const scheduleReload = () => {
-            clearTimeout(reloadTimerRef.current);
-            reloadTimerRef.current = setTimeout(() => {
-                loadCollectionsRef.current?.(undefined, { fresh: true, silent: true });
-            }, 400);
-        };
-
         const setupEcho = async () => {
             const echo = await createEcho();
             if (cancelled || !echo) {
@@ -301,7 +459,6 @@ export const AppProvider = ({ children }) => {
                 .listen('.quotation.submitted', (event) => {
                     const quote = event.quotation;
                     if (!quote) {
-                        scheduleReload();
                         return;
                     }
                     setCollections((prev) => ({
@@ -319,15 +476,49 @@ export const AppProvider = ({ children }) => {
                         setCollections((prev) => ({ ...prev, opportunities: opportunities || [] }));
                     }).catch(() => {});
                 })
-                .listen('.stock.updated', scheduleReload)
-                .listen('.purchase-order.updated', scheduleReload);
+                .listen('.stock.updated', (event) => {
+                    const item = event.item;
+                    if (!item) {
+                        return;
+                    }
+                    setCollections((prev) => ({
+                        ...prev,
+                        inventory: prev.inventory.map((row) => (
+                            row.id === item.id || row.itemCode === item.itemCode ? mergeDefined(row, item) : row
+                        )),
+                    }));
+                })
+                .listen('.purchase-order.updated', (event) => {
+                    const po = event.purchaseOrder;
+                    if (!po?.poNumber) {
+                        return;
+                    }
+                    setCollections((prev) => ({
+                        ...prev,
+                        purchaseOrders: prev.purchaseOrders.some((item) => item.poNumber === po.poNumber)
+                            ? prev.purchaseOrders.map((item) => item.poNumber === po.poNumber ? mergeDefined(item, po) : item)
+                            : [po, ...prev.purchaseOrders],
+                        procurementRequests: prev.procurementRequests.map((pr) => (
+                            pr.id === po.procurementId || pr.poNumber === po.poNumber
+                                ? {
+                                    ...pr,
+                                    poNumber: po.poNumber || pr.poNumber,
+                                    status: po.financeApprovalStatus === 'Finance Approved'
+                                        ? 'Finance Approved'
+                                        : po.financeApprovalStatus === 'Finance Rejected'
+                                            ? 'Finance Rejected'
+                                            : pr.status,
+                                }
+                                : pr
+                        )),
+                    }));
+                });
         };
 
         setupEcho();
 
         return () => {
             cancelled = true;
-            clearTimeout(reloadTimerRef.current);
             echoRef.current?.leave('supply-chain');
             echoRef.current?.disconnect();
             echoRef.current = null;
@@ -336,7 +527,7 @@ export const AppProvider = ({ children }) => {
 
     useEffect(() => {
         if (!user) {
-            liveStampRef.current = '';
+            liveStampsRef.current = {};
             coreReadyRef.current = false;
             return undefined;
         }
@@ -349,20 +540,24 @@ export const AppProvider = ({ children }) => {
             if (cancelled || document.hidden || inFlight || !coreReadyRef.current) {
                 return;
             }
+            if (Date.now() < livePauseUntilRef.current) {
+                return;
+            }
 
             inFlight = true;
             try {
-                const stamp = encodeURIComponent(liveStampRef.current || '');
-                const data = await api.get(`/api/live?stamp=${stamp}`, { portal, timeout: 8000 });
+                const params = new URLSearchParams(liveStampsRef.current);
+                const data = await api.get(`/api/live?${params.toString()}`, { portal, timeout: 8000 });
                 if (cancelled || !data) {
                     return;
                 }
-                if (data.stamp) {
-                    liveStampRef.current = data.stamp;
+                if (data.stamps) {
+                    liveStampsRef.current = data.stamps;
                 }
                 applyBootstrapPayload(data, user);
                 if (collectionKeys.some((key) => Object.prototype.hasOwnProperty.call(data, key))) {
-                    writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...data, stamp: undefined });
+                    const { stamp: _stamp, stamps: _stamps, ...collectionsData } = data;
+                    writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...collectionsData });
                 }
             } catch {
                 // Keep the current screen if a live poll fails.
@@ -373,8 +568,8 @@ export const AppProvider = ({ children }) => {
 
         const startId = window.setTimeout(() => {
             void syncLive();
-            intervalId = window.setInterval(syncLive, 2500);
-        }, 1200);
+            intervalId = window.setInterval(syncLive, 4000);
+        }, 1500);
 
         document.addEventListener('visibilitychange', syncLive);
 
@@ -392,7 +587,7 @@ export const AppProvider = ({ children }) => {
         setAuthToken(payload.token, targetPortal);
         invalidateBootstrap();
         moreRequestedRef.current = false;
-        liveStampRef.current = '';
+        liveStampsRef.current = {};
         coreReadyRef.current = false;
         const current = applyUser(withoutToken(payload), targetPortal);
         void loadCollections(current, { fresh: true });
@@ -411,32 +606,235 @@ export const AppProvider = ({ children }) => {
             setCollections(emptyCollections);
             setActiveTab('dashboard');
             moreRequestedRef.current = false;
-            liveStampRef.current = '';
+            liveStampsRef.current = {};
             coreReadyRef.current = false;
         }
     };
 
+    const pauseLiveSync = () => {
+        livePauseUntilRef.current = Date.now() + 10000;
+    };
+
+    const handleActionError = (error) => {
+        if (error instanceof ApiError && error.status === 401) {
+            setAuthToken('', portal);
+            setPortalUser(null, portal);
+            setCollections(emptyCollections);
+        }
+        setActionError(error.message || 'Request failed');
+    };
+
     const processSupplyRequestStock = (requestId) =>
-        runAction(() => api.post(`/api/supply-requests/${requestId}/check-stock`));
+        runAction(
+            () => api.post(`/api/supply-requests/${requestId}/check-stock`),
+            {
+                optimistic: (prev) => {
+                    const req = prev.supplyRequests.find((item) => item.id === requestId);
+                    const item = prev.inventory.find((row) => row.itemCode === req?.itemCode);
+                    const enough = (item?.quantity || 0) >= (req?.quantityRequested || 0);
+                    return {
+                        ...prev,
+                        supplyRequests: prev.supplyRequests.map((row) => (
+                            row.id === requestId
+                                ? {
+                                    ...row,
+                                    status: enough ? 'Ready for Release' : 'For Procurement',
+                                    stockAvailability: enough ? 'Stock Available' : 'Insufficient Stock',
+                                }
+                                : row
+                        )),
+                    };
+                },
+            }
+        );
 
     const selectSupplierAndCreatePO = (procurementId, quotationId) =>
-        runAction(() => api.post(`/api/quotations/${quotationId}/select`));
+        runAction(
+            () => api.post(`/api/quotations/${quotationId}/select`),
+            {
+                optimistic: (prev) => {
+                    const quote = prev.quotations.find((item) => item.id === quotationId);
+                    return {
+                        ...prev,
+                        quotations: prev.quotations.map((item) => (
+                            item.procurementId === procurementId
+                                ? { ...item, status: item.id === quotationId ? 'Selected' : 'Rejected' }
+                                : item
+                        )),
+                        procurementRequests: prev.procurementRequests.map((item) => (
+                            item.id === procurementId
+                                ? {
+                                    ...item,
+                                    status: 'Pending Finance Approval',
+                                    selectedSupplier: quote?.supplierName || item.selectedSupplier,
+                                    canEdit: false,
+                                }
+                                : item
+                        )),
+                    };
+                },
+                onSuccess: (po) => {
+                    if (!po?.poNumber) {
+                        return;
+                    }
+                    commitCollections((prev) => ({
+                        ...prev,
+                        purchaseOrders: upsertList(prev.purchaseOrders, po, 'poNumber'),
+                        procurementRequests: prev.procurementRequests.map((item) => (
+                            item.id === (po.procurementId || procurementId)
+                                ? { ...item, poNumber: po.poNumber, selectedSupplier: po.supplier || item.selectedSupplier, status: 'Pending Finance Approval' }
+                                : item
+                        )),
+                    }));
+                },
+            }
+        );
 
-    const updateFinanceApproval = (poNumber, status, remarks = '') =>
-        runAction(() => api.post(`/api/purchase-orders/${poNumber}/finance-decision`, { status, remarks }));
+    const updateFinanceApproval = async (poNumber, status, remarks = '') => {
+        pauseLiveSync();
+        const snapshotOrders = collections.purchaseOrders;
+        const snapshotRequests = collections.procurementRequests;
+        const targetPo = snapshotOrders.find((po) => po.poNumber === poNumber);
+        const poStatus = status === 'Finance Approved'
+            ? 'Sent to Supplier'
+            : status === 'Finance Rejected'
+                ? 'Finance Rejected'
+                : 'Returned for Revision';
+        const prStatus = status === 'Finance Approved'
+            ? 'Finance Approved'
+            : status === 'Finance Rejected'
+                ? 'Finance Rejected'
+                : 'Quotation';
 
-    const supplierConfirmPO = (poNumber) =>
-        runAction(() => api.post(`/api/purchase-orders/${poNumber}/confirm`));
-
-    const processDeliveryInspection = (deliveryId, itemsDelivered, inspectionResult, remarks) =>
-        runAction(() => api.post(`/api/deliveries/${deliveryId}/inspect`, {
-            itemsDelivered,
-            inspectionResult,
-            remarks,
+        setCollections((previous) => ({
+            ...previous,
+            purchaseOrders: previous.purchaseOrders.map((po) => (
+                po.poNumber === poNumber
+                    ? { ...po, financeApprovalStatus: status, poStatus, financeRemarks: remarks || po.financeRemarks }
+                    : po
+            )),
+            procurementRequests: previous.procurementRequests.map((pr) => (
+                pr.id === targetPo?.procurementId || pr.poNumber === poNumber
+                    ? { ...pr, status: prStatus, poNumber }
+                    : pr
+            )),
         }));
 
+        try {
+            const po = await api.post(`/api/purchase-orders/${poNumber}/finance-decision`, { status, remarks });
+            setCollections((previous) => {
+                const next = {
+                    ...previous,
+                    purchaseOrders: previous.purchaseOrders.map((item) => (
+                        item.poNumber === poNumber ? mergeDefined(item, po) : item
+                    )),
+                };
+                writeBootstrapCache('internal', { ...(readBootstrapCache('internal') || {}), ...next });
+                return next;
+            });
+            return po;
+        } catch (error) {
+            setCollections((previous) => ({
+                ...previous,
+                purchaseOrders: snapshotOrders,
+                procurementRequests: snapshotRequests,
+            }));
+            handleActionError(error);
+            throw error;
+        }
+    };
+
+    const supplierConfirmPO = async (poNumber) => {
+        pauseLiveSync();
+        const snapshotOrders = collections.purchaseOrders;
+        setCollections((previous) => ({
+            ...previous,
+            purchaseOrders: previous.purchaseOrders.map((po) => (
+                po.poNumber === poNumber ? { ...po, poStatus: 'Confirmed' } : po
+            )),
+        }));
+
+        try {
+            const po = await api.post(`/api/purchase-orders/${poNumber}/confirm`);
+            setCollections((previous) => {
+                const next = {
+                    ...previous,
+                    purchaseOrders: previous.purchaseOrders.map((item) => (
+                        item.poNumber === poNumber ? mergeDefined(item, po) : item
+                    )),
+                };
+                writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...next });
+                return next;
+            });
+            return po;
+        } catch (error) {
+            setCollections((previous) => ({
+                ...previous,
+                purchaseOrders: snapshotOrders,
+            }));
+            handleActionError(error);
+            throw error;
+        }
+    };
+
+    const processDeliveryInspection = (deliveryId, itemsDelivered, inspectionResult, remarks) =>
+        runAction(
+            () => api.post(`/api/deliveries/${deliveryId}/inspect`, {
+                itemsDelivered,
+                inspectionResult,
+                remarks,
+            }),
+            {
+                optimistic: (prev) => ({
+                    ...prev,
+                    deliveries: prev.deliveries.map((item) => (
+                        item.id === deliveryId
+                            ? {
+                                ...item,
+                                status: inspectionResult === 'Passed' ? 'Accepted' : (inspectionResult === 'Partial' ? 'Partially Accepted' : 'Rejected'),
+                                inspectionResult,
+                                inspectionNotes: remarks,
+                                itemsDelivered,
+                            }
+                            : item
+                    )),
+                }),
+            }
+        );
+
     const releaseSupplyRequest = (requestId, releasedTo) =>
-        runAction(() => api.post(`/api/supply-requests/${requestId}/release`, { releasedTo }));
+        runAction(
+            () => api.post(`/api/supply-requests/${requestId}/release`, { releasedTo }),
+            {
+                optimistic: (prev) => {
+                    const req = prev.supplyRequests.find((item) => item.id === requestId);
+                    return {
+                        ...prev,
+                        supplyRequests: prev.supplyRequests.map((item) => (
+                            item.id === requestId ? { ...item, status: 'Released' } : item
+                        )),
+                        inventory: prev.inventory.map((item) => (
+                            item.itemCode === req?.itemCode
+                                ? { ...item, quantity: Math.max(0, Number(item.quantity || 0) - Number(req.quantityRequested || 0)) }
+                                : item
+                        )),
+                        releases: req
+                            ? [{
+                                id: `tmp-${Date.now()}`,
+                                requestId,
+                                requestingDepartment: req.requestingDepartment,
+                                itemCode: req.itemCode,
+                                itemName: req.itemName,
+                                quantityReleased: req.quantityRequested,
+                                approvalStatus: 'Released',
+                                releasedTo,
+                                releaseDate: new Date().toISOString().slice(0, 10),
+                            }, ...prev.releases]
+                            : prev.releases,
+                    };
+                },
+            }
+        );
 
     const saveInventoryItem = (itemData) =>
         runAction(() => {
@@ -466,6 +864,38 @@ export const AppProvider = ({ children }) => {
             return itemData.id
                 ? api.put(`/api/inventory-items/${itemData.id}`, payload)
                 : api.post('/api/inventory-items', payload);
+        }, {
+            optimistic: (prev) => {
+                if (!itemData.id) {
+                    return {
+                        ...prev,
+                        inventory: [{
+                            id: `tmp-${Date.now()}`,
+                            itemCode: itemData.itemCode || '',
+                            itemName: itemData.description || itemData.itemName,
+                            description: itemData.description || itemData.itemName,
+                            category: itemData.category,
+                            quantity: Number(itemData.quantity || 0),
+                            damagedQuantity: 0,
+                            minStockLevel: Number(itemData.minStockLevel || 0),
+                            unit: itemData.unit,
+                            supplier: itemData.supplier || '',
+                            cost: Number(itemData.cost || 0),
+                            location: 'Unassigned',
+                            status: Number(itemData.quantity || 0) <= 0 ? 'OUT OF STOCK' : 'NORMAL',
+                        }, ...prev.inventory],
+                    };
+                }
+                return {
+                    ...prev,
+                    inventory: prev.inventory.map((item) => (
+                        item.id === itemData.id ? mergeDefined(item, {
+                            ...itemData,
+                            itemName: itemData.description || itemData.itemName || item.itemName,
+                        }) : item
+                    )),
+                };
+            },
         });
 
     const createStorageLocation = (locationData) =>
@@ -489,7 +919,14 @@ export const AppProvider = ({ children }) => {
         });
 
     const submitPhysicalCount = (countId, updatedItems) =>
-        runAction(() => api.post(`/api/stock-counts/${countId}/submit`, { items: updatedItems }));
+        runAction(() => api.post(`/api/stock-counts/${countId}/submit`, { items: updatedItems }), {
+            optimistic: (prev) => ({
+                ...prev,
+                stockCounts: prev.stockCounts.map((item) => (
+                    item.id === countId ? { ...item, status: 'Completed', items: updatedItems } : item
+                )),
+            }),
+        });
 
     const submitSupplierQuotation = (newQuote) =>
         runAction(() => {
@@ -506,6 +943,26 @@ export const AppProvider = ({ children }) => {
                 return api.post('/api/quotations', form);
             }
             return api.post('/api/quotations', payload);
+        }, {
+            optimistic: (prev) => ({
+                ...prev,
+                quotations: [{
+                    id: `tmp-${Date.now()}`,
+                    procurementId: newQuote.procurementId,
+                    supplierId: newQuote.supplierId,
+                    supplierName: newQuote.supplierName,
+                    item: newQuote.item,
+                    quantity: newQuote.quantity,
+                    unitPrice: Number(newQuote.unitPrice || 0),
+                    totalPrice: Number(newQuote.totalPrice || 0),
+                    warranty: newQuote.warranty,
+                    deliveryTimeDays: Number(newQuote.deliveryTimeDays || 0),
+                    paymentTerms: newQuote.paymentTerms,
+                    status: 'Submitted',
+                    notes: newQuote.notes,
+                }, ...prev.quotations],
+                opportunities: prev.opportunities.filter((item) => item.prNumber !== newQuote.procurementId),
+            }),
         });
 
     const updateSupplierQuotation = (quoteId, quoteData) =>
@@ -523,6 +980,13 @@ export const AppProvider = ({ children }) => {
                 return api.post(`/api/quotations/${quoteId}`, form);
             }
             return api.put(`/api/quotations/${quoteId}`, payload);
+        }, {
+            optimistic: (prev) => ({
+                ...prev,
+                quotations: prev.quotations.map((item) => (
+                    item.id === quoteId ? mergeDefined(item, quoteData) : item
+                )),
+            }),
         });
 
     const addDocument = (doc) =>
@@ -539,16 +1003,59 @@ export const AppProvider = ({ children }) => {
                 form.append('file', file);
             }
             return api.post('/api/documents', form);
+        }, {
+            optimistic: (prev) => ({
+                ...prev,
+                documents: [{
+                    id: `tmp-${Date.now()}`,
+                    title: doc.title,
+                    type: doc.type,
+                    referenceNumber: doc.referenceNumber,
+                    supplier: doc.supplier,
+                    expirationDate: doc.expirationDate,
+                    status: 'Active',
+                    category: doc.category,
+                    itemCode: doc.itemCode,
+                    purchaseOrderNumber: doc.purchaseOrderNumber,
+                }, ...prev.documents],
+            }),
         });
 
     const createManualProcurementRequest = (itemCode, quantity, reason, priority) =>
-        runAction(() => api.post('/api/procurement-requests', { itemCode, quantity, reason, priority }));
+        runAction(() => api.post('/api/procurement-requests', { itemCode, quantity, reason, priority }), {
+            optimistic: (prev) => {
+                const item = prev.inventory.find((row) => row.itemCode === itemCode);
+                return {
+                    ...prev,
+                    procurementRequests: [{
+                        id: `tmp-${Date.now()}`,
+                        itemCode,
+                        itemName: item?.itemName || item?.description || itemCode,
+                        quantity,
+                        reason,
+                        priority,
+                        status: 'For Procurement',
+                        canEdit: true,
+                        sentToVendors: false,
+                        dateCreated: new Date().toISOString().slice(0, 10),
+                    }, ...prev.procurementRequests],
+                };
+            },
+        });
 
     const updateProcurementRequest = (prId, data) =>
-        runAction(() => api.put(`/api/procurement-requests/${prId}`, data));
+        runAction(() => api.put(`/api/procurement-requests/${prId}`, data), {
+            optimistic: (prev) => ({
+                ...prev,
+                procurementRequests: prev.procurementRequests.map((item) => (
+                    item.id === prId ? mergeDefined(item, data) : item
+                )),
+            }),
+        });
 
     const sendProcurementToVendors = async (procurementId) => {
         setActionError('');
+        pauseLiveSync();
         const snapshot = collections.procurementRequests;
 
         setCollections((previous) => ({
@@ -589,10 +1096,22 @@ export const AppProvider = ({ children }) => {
     };
 
     const markNotificationRead = (id) =>
-        runAction(() => api.post(`/api/notifications/${id}/read`));
+        runAction(() => api.post(`/api/notifications/${id}/read`), {
+            optimistic: (prev) => ({
+                ...prev,
+                notifications: prev.notifications.map((item) => (
+                    item.id === id ? { ...item, read: true } : item
+                )),
+            }),
+        });
 
     const markAllNotificationsRead = () =>
-        runAction(() => api.post('/api/notifications/read-all'));
+        runAction(() => api.post('/api/notifications/read-all'), {
+            optimistic: (prev) => ({
+                ...prev,
+                notifications: prev.notifications.map((item) => ({ ...item, read: true })),
+            }),
+        });
 
     const openTab = (tab) => {
         setActiveTab(tab);

@@ -13,7 +13,7 @@ class NotificationService
     public function create(string $title, string $message, string $type = 'info', string $severity = 'info', ?int $userId = null): AppNotification
     {
         $notification = AppNotification::query()->create([
-            'notification_number' => DocumentCode::next('supply_notifications', 'notification_number', 'NOTIF', 3, false),
+            'notification_number' => 'NOTIF-'.strtoupper(bin2hex(random_bytes(4))),
             'user_id' => $userId,
             'title' => $title,
             'message' => $message,

@@ -12,7 +12,7 @@ class LiveSyncController extends Controller
     {
         return $this->ok($bootstrap->liveForUser(
             $request->user(),
-            (string) $request->query('stamp', ''),
+            $request->query(),
         ));
     }
 }

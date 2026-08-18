@@ -46,21 +46,17 @@ export const Documents = () => {
     }
   };
 
-  const handleCreateDoc = async (e) => {
+  const handleCreateDoc = (e) => {
     e.preventDefault();
     const supplier = suppliers.find((s) => String(s.id) === String(newDocForm.supplierId));
-    try {
-      await addDocument({
-        ...newDocForm,
-        supplier: supplier?.companyName || supplier?.name || '',
-        supplierId: newDocForm.supplierId || undefined,
-        warrantyMonths: newDocForm.type === 'Warranty' ? newDocForm.warrantyMonths : undefined,
-        file,
-      });
-      closeModal();
-    } catch {
-      // Action error is shown by AppContext.
-    }
+    void addDocument({
+      ...newDocForm,
+      supplier: supplier?.companyName || supplier?.name || '',
+      supplierId: newDocForm.supplierId || undefined,
+      warrantyMonths: newDocForm.type === 'Warranty' ? newDocForm.warrantyMonths : undefined,
+      file,
+    });
+    closeModal();
   };
 
   const expiryRequired = EXPIRY_REQUIRED.includes(newDocForm.type);

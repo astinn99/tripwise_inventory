@@ -15,7 +15,6 @@ use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\ProcurementRequest;
 use App\Models\PurchaseOrder;
-use App\Models\PurchaseOrderTimelineStep;
 use App\Models\Quotation;
 use App\Models\Release;
 use App\Models\StockCount;
@@ -99,7 +98,7 @@ class SupplyChainService
                     'success'
                 );
 
-                return $request->fresh(['logs']);
+                return $request->fresh(['logs', 'procurementRequests']);
             }
 
             $prNumber = DocumentCode::next('procurement_requests', 'pr_number', 'PR');
@@ -135,7 +134,7 @@ class SupplyChainService
                 'warning'
             );
 
-            return $request->fresh(['logs']);
+            return $request->fresh(['logs', 'procurementRequests']);
         });
     }
 
@@ -209,95 +208,85 @@ class SupplyChainService
 
     public function updateFinanceApproval(PurchaseOrder $po, string $status, string $remarks, User $actor): PurchaseOrder
     {
-        return DB::transaction(function () use ($po, $status, $remarks, $actor) {
-            $timestamp = now()->format('Y-m-d H:i');
-            $poStatus = $po->po_status;
+        $timestamp = now()->format('Y-m-d H:i');
+        $remarksText = $remarks !== ''
+            ? $remarks
+            : ($status === 'Finance Approved' ? 'Approved by Finance Officer' : 'Decision recorded by Finance');
 
-            $po->timeline->each(function (PurchaseOrderTimelineStep $step) use ($status, $timestamp) {
-                if ($step->step !== 'Finance Approval Checkpoint') {
-                    return;
-                }
+        if ($status === 'Finance Approved') {
+            $poStatus = 'Sent to Supplier';
+            $prStatus = 'Finance Approved';
+            $timeline = [
+                'Finance Approval Checkpoint' => [$timestamp, 'completed'],
+                'Sent to Supplier' => [$timestamp, 'completed'],
+                'Supplier Confirmation' => ['Awaiting Supplier Response', 'in_progress'],
+            ];
+        } elseif ($status === 'Finance Rejected') {
+            $poStatus = 'Finance Rejected';
+            $prStatus = 'Finance Rejected';
+            $timeline = [
+                'Finance Approval Checkpoint' => ["{$timestamp} (REJECTED)", 'rejected'],
+            ];
+        } else {
+            $poStatus = 'Returned for Revision';
+            $prStatus = 'Quotation';
+            $timeline = [
+                'Finance Approval Checkpoint' => ["{$timestamp} (RETURNED)", 'returned'],
+            ];
+        }
 
-                if ($status === 'Finance Approved') {
-                    $step->update(['step_date' => $timestamp, 'status' => 'completed']);
-                } elseif ($status === 'Finance Rejected') {
-                    $step->update(['step_date' => "{$timestamp} (REJECTED)", 'status' => 'rejected']);
-                } else {
-                    $step->update(['step_date' => "{$timestamp} (RETURNED)", 'status' => 'returned']);
-                }
-            });
+        $this->updateTimelineSteps((int) $po->id, $timeline);
 
-            if ($status === 'Finance Approved') {
-                $poStatus = 'Sent to Supplier';
-                $po->timeline->firstWhere('step', 'Sent to Supplier')?->update([
-                    'step_date' => $timestamp,
-                    'status' => 'completed',
-                ]);
-                $po->timeline->firstWhere('step', 'Supplier Confirmation')?->update([
-                    'step_date' => 'Awaiting Supplier Response',
-                    'status' => 'in_progress',
-                ]);
-            } elseif ($status === 'Finance Rejected') {
-                $poStatus = 'Finance Rejected';
-            } else {
-                $poStatus = 'Returned for Revision';
-            }
+        $po->update([
+            'finance_approval_status' => $status,
+            'po_status' => $poStatus,
+            'approver' => $actor->name,
+            'finance_remarks' => $remarksText,
+        ]);
 
-            $po->update([
-                'finance_approval_status' => $status,
-                'po_status' => $poStatus,
-                'approver' => $actor->name,
-                'finance_remarks' => $remarks !== '' ? $remarks : ($status === 'Finance Approved' ? 'Approved by Finance Officer' : 'Decision recorded by Finance'),
+        if ($po->procurement_request_id) {
+            ProcurementRequest::query()->whereKey($po->procurement_request_id)->update([
+                'status' => $prStatus,
             ]);
+        }
 
-            if ($po->procurementRequest) {
-                $po->procurementRequest->update([
-                    'status' => $status === 'Finance Approved' ? 'Finance Approved' : ($status === 'Finance Rejected' ? 'Finance Rejected' : 'Quotation'),
-                ]);
-            }
-
+        $poNumber = $po->po_number;
+        dispatch(function () use ($po, $poNumber, $status, $remarksText): void {
             $this->notifications->create(
                 "Finance Subsystem Decision: {$status}",
-                "Purchase Order {$po->po_number} has been updated to \"{$status}\". Remarks: ".($remarks !== '' ? $remarks : 'None'),
+                "Purchase Order {$poNumber} has been updated to \"{$status}\". Remarks: ".($remarksText !== '' ? $remarksText : 'None'),
                 'finance',
                 $status === 'Finance Approved' ? 'success' : ($status === 'Finance Rejected' ? 'danger' : 'warning')
             );
+            $this->broadcastPO($po);
+        })->afterResponse();
 
-            $fresh = $po->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']);
-            $this->broadcastPO($fresh);
-
-            return $fresh;
-        });
+        return $po;
     }
 
     public function supplierConfirmPO(PurchaseOrder $po): PurchaseOrder
     {
-        return DB::transaction(function () use ($po) {
-            $timestamp = now()->format('Y-m-d H:i');
-            $po->timeline->firstWhere('step', 'Supplier Confirmation')?->update([
-                'step_date' => $timestamp,
-                'status' => 'completed',
-            ]);
-            $po->timeline->firstWhere('step', 'Delivery & Inspection')?->update([
-                'step_date' => 'In Transit',
-                'status' => 'in_progress',
-            ]);
-            $po->update(['po_status' => 'Confirmed']);
-            $po->loadMissing('items');
-            $this->createInboundDeliveryFromPO($po);
+        $timestamp = now()->format('Y-m-d H:i');
+        $this->updateTimelineSteps((int) $po->id, [
+            'Supplier Confirmation' => [$timestamp, 'completed'],
+            'Delivery & Inspection' => ['In Transit', 'in_progress'],
+        ]);
+        $po->update(['po_status' => 'Confirmed']);
+        $po->loadMissing('items');
+        $this->createInboundDeliveryFromPO($po);
 
+        $poNumber = $po->po_number;
+        dispatch(function () use ($po, $poNumber): void {
             $this->notifications->create(
                 'Supplier Confirmed PO',
-                "Supplier has confirmed PO {$po->po_number}. Inbound delivery created for Receiving and Inspection.",
+                "Supplier has confirmed PO {$poNumber}. Inbound delivery created for Receiving and Inspection.",
                 'po',
                 'success'
             );
+            $this->broadcastPO($po);
+        })->afterResponse();
 
-            $fresh = $po->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']);
-            $this->broadcastPO($fresh);
-
-            return $fresh;
-        });
+        return $po;
     }
 
     public function syncConfirmedPurchaseOrderDeliveries(): int
@@ -1255,6 +1244,32 @@ class SupplyChainService
                 'status' => $status,
             ]);
         }
+    }
+
+    private function updateTimelineSteps(int $purchaseOrderId, array $updates): void
+    {
+        if ($updates === []) {
+            return;
+        }
+
+        $dateSql = 'CASE step';
+        $statusSql = 'CASE step';
+        $bindings = [];
+
+        foreach ($updates as $step => [$date, $status]) {
+            $dateSql .= ' WHEN ? THEN ?';
+            $statusSql .= ' WHEN ? THEN ?';
+            array_push($bindings, $step, $date, $step, $status);
+        }
+
+        $dateSql .= ' ELSE step_date END';
+        $statusSql .= ' ELSE status END';
+        $placeholders = implode(',', array_fill(0, count($updates), '?'));
+
+        DB::update(
+            "UPDATE purchase_order_timeline_steps SET step_date = {$dateSql}, status = {$statusSql}, updated_at = ? WHERE purchase_order_id = ? AND step IN ({$placeholders})",
+            [...$bindings, now(), $purchaseOrderId, ...array_keys($updates)]
+        );
     }
 
     private function broadcastPO(PurchaseOrder $po): void

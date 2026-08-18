@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\InventoryItem;
+use App\Models\ProcurementRequest;
 use App\Models\PurchaseOrder;
 use App\Models\StorageLocation;
 use App\Models\Supplier;
@@ -116,9 +117,9 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonStructure([
                 'data' => [
                     'stamp',
+                    'stamps',
                     'quotations',
                     'notifications',
-                    'procurementRequests',
                 ],
             ]);
     }
@@ -547,6 +548,72 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonPath('data.unitPrice', 1200)
             ->assertJsonPath('data.totalPrice', 12000)
             ->assertJsonPath('data.canEdit', true);
+    }
+
+    public function test_finance_approval_updates_purchase_order_status(): void
+    {
+        $user = User::factory()->create();
+        $pr = ProcurementRequest::query()->create([
+            'pr_number' => 'PR-2026-401',
+            'department' => 'Operations',
+            'item_code' => 'COM-401',
+            'item_name' => 'Radio',
+            'quantity' => 2,
+            'status' => 'Pending Finance Approval',
+        ]);
+        $po = PurchaseOrder::query()->create([
+            'po_number' => 'PO-2026-401',
+            'procurement_request_id' => $pr->id,
+            'supplier' => 'Metro Parts Trading',
+            'total_cost' => 5000,
+            'budget_reference' => 'BUD-2026-OPS-01',
+            'payment_terms' => '30 Days Net',
+            'finance_approval_status' => 'Pending Finance Approval',
+            'po_status' => 'Pending Finance Approval',
+            'created_date' => now()->toDateString(),
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 1,
+            'step' => 'Finance Approval Checkpoint',
+            'step_date' => '—',
+            'status' => 'in_progress',
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 2,
+            'step' => 'Sent to Supplier',
+            'step_date' => '—',
+            'status' => 'pending',
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 3,
+            'step' => 'Supplier Confirmation',
+            'step_date' => '—',
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/api/purchase-orders/PO-2026-401/finance-decision', [
+                'status' => 'Finance Approved',
+                'remarks' => 'Budget verified',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.poNumber', 'PO-2026-401')
+            ->assertJsonPath('data.financeApprovalStatus', 'Finance Approved')
+            ->assertJsonPath('data.poStatus', 'Sent to Supplier');
+
+        $this->assertDatabaseHas('purchase_orders', [
+            'po_number' => 'PO-2026-401',
+            'po_status' => 'Sent to Supplier',
+        ]);
+        $this->assertDatabaseHas('procurement_requests', [
+            'pr_number' => 'PR-2026-401',
+            'status' => 'Finance Approved',
+        ]);
+        $this->assertDatabaseHas('purchase_order_timeline_steps', [
+            'purchase_order_id' => $po->id,
+            'step' => 'Sent to Supplier',
+            'status' => 'completed',
+        ]);
     }
 
     public function test_vendor_confirm_creates_inbound_delivery(): void

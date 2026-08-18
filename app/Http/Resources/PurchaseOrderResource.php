@@ -16,14 +16,14 @@ class PurchaseOrderResource extends JsonResource
             'supplierId' => $this->supplierAccount?->code,
             'supplier' => $this->supplier,
             'contactPerson' => $this->contact_person,
-            'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($item) => [
+            'items' => $this->when($this->relationLoaded('items'), fn () => $this->items->map(fn ($item) => [
                 'itemCode' => $item->item_code,
                 'description' => $item->description,
                 'quantity' => $item->quantity,
                 'unitPrice' => (float) $item->unit_price,
                 'total' => (float) $item->total,
                 'deliveredQty' => $item->delivered_qty,
-            ])->values(), []),
+            ])->values()),
             'totalCost' => (float) $this->total_cost,
             'budgetReference' => $this->budget_reference,
             'paymentTerms' => $this->payment_terms,
@@ -38,11 +38,11 @@ class PurchaseOrderResource extends JsonResource
             'createdDate' => optional($this->created_date)?->format('Y-m-d'),
             'approver' => $this->approver,
             'financeRemarks' => $this->finance_remarks,
-            'timeline' => $this->whenLoaded('timeline', fn () => $this->timeline->map(fn ($step) => [
+            'timeline' => $this->when($this->relationLoaded('timeline'), fn () => $this->timeline->map(fn ($step) => [
                 'step' => $step->step,
                 'date' => $step->step_date,
                 'status' => $step->status,
-            ])->values(), []),
+            ])->values()),
         ];
     }
 }

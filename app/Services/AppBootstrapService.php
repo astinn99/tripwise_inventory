@@ -54,18 +54,42 @@ class AppBootstrapService
             : $this->internalCore();
     }
 
-    public function liveForUser(User $user, string $clientStamp = ''): array
+    public function liveForUser(User $user, array $query = []): array
     {
-        $stamp = $this->liveStamp($user);
+        $stamps = $this->liveStamps($user);
+        $payload = [
+            'stamp' => implode('|', $stamps),
+            'stamps' => $stamps,
+        ];
 
-        if ($clientStamp === '' || $clientStamp === $stamp) {
-            return ['stamp' => $stamp];
+        $hasCollectionStamps = array_key_exists('quotations', $query)
+            || array_key_exists('notifications', $query)
+            || array_key_exists('purchaseOrders', $query)
+            || array_key_exists('opportunities', $query);
+
+        $clientStamp = (string) ($query['stamp'] ?? '');
+
+        if (! $hasCollectionStamps) {
+            if ($clientStamp === '' || $clientStamp === $payload['stamp']) {
+                return $payload;
+            }
+
+            foreach ($stamps as $key => $stamp) {
+                $payload[$key] = $this->liveCollection($user, $key);
+            }
+
+            return $payload;
         }
 
-        return [
-            'stamp' => $stamp,
-            ...($user->isSupplier() ? $this->supplierCollections($user) : $this->internalLiveCollections()),
-        ];
+        foreach ($stamps as $key => $stamp) {
+            if ((string) ($query[$key] ?? '') === (string) $stamp) {
+                continue;
+            }
+
+            $payload[$key] = $this->liveCollection($user, $key);
+        }
+
+        return $payload;
     }
 
     public function dashboardTrends(?Collection $movements = null, ?Collection $items = null): array
@@ -81,7 +105,7 @@ class AppBootstrapService
         ];
     }
 
-    private function liveStamp(User $user): string
+    private function liveStamps(User $user): array
     {
         if ($user->isSupplier()) {
             $supplierId = (int) $user->supplier_id;
@@ -96,36 +120,69 @@ class AppBootstrapService
                     (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id = ?) AS notif_id',
                 [$supplierId, $supplierId, $supplierId, $supplierId, $supplierId, $userId]
             );
-        } else {
-            $row = DB::selectOne(
-                'SELECT
-                    (SELECT COALESCE(MAX(id), 0) FROM quotations) AS quotations_id,
-                    (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM quotations) AS quotations_at,
-                    (SELECT COALESCE(MAX(id), 0) FROM procurement_requests) AS pr_id,
-                    (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM procurement_requests) AS pr_at,
-                    (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id IS NULL) AS notif_id'
-            );
+
+            return [
+                'quotations' => ($row->quotations_id ?? 0).'|'.($row->quotations_at ?? '0'),
+                'purchaseOrders' => ($row->po_id ?? 0).'|'.($row->po_at ?? '0'),
+                'opportunities' => (string) ($row->opp_id ?? 0),
+                'notifications' => (string) ($row->notif_id ?? 0),
+            ];
         }
 
-        return implode('|', [
-            $row->quotations_id ?? 0,
-            $row->quotations_at ?? '0',
-            $row->pr_id ?? 0,
-            $row->pr_at ?? '0',
-            $row->po_id ?? 0,
-            $row->po_at ?? '0',
-            $row->opp_id ?? 0,
-            $row->notif_id ?? 0,
-        ]);
+        $row = DB::selectOne(
+            'SELECT
+                (SELECT COALESCE(MAX(id), 0) FROM quotations) AS quotations_id,
+                (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM quotations) AS quotations_at,
+                (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id IS NULL) AS notif_id'
+        );
+
+        return [
+            'quotations' => ($row->quotations_id ?? 0).'|'.($row->quotations_at ?? '0'),
+            'notifications' => (string) ($row->notif_id ?? 0),
+        ];
     }
 
-    private function internalLiveCollections(): array
+    private function liveCollection(User $user, string $key): array
     {
-        return [
-            'quotations' => $this->quotationsPayload(),
-            'notifications' => $this->notificationsPayload(),
-            'procurementRequests' => $this->procurementRequestsPayload(),
-        ];
+        $supplierId = $user->isSupplier() ? (int) $user->supplier_id : null;
+
+        return match ($key) {
+            'quotations' => $this->quotationsPayload($supplierId),
+            'notifications' => $this->notificationsPayload($user->isSupplier() ? $user->id : null),
+            'purchaseOrders' => $this->purchaseOrdersPayload($supplierId),
+            'opportunities' => $this->opportunitiesPayload($user),
+            default => [],
+        };
+    }
+
+    private function purchaseOrdersPayload(?int $supplierId = null): array
+    {
+        return $this->resolve(PurchaseOrderResource::collection(
+            PurchaseOrder::query()
+                ->with(['items', 'procurementRequest:id,pr_number'])
+                ->when($supplierId !== null, fn ($query) => $query->where('supplier_id', $supplierId))
+                ->orderByDesc('id')
+                ->get()
+        ));
+    }
+
+    private function opportunitiesPayload(User $user): array
+    {
+        $supplierId = $user->supplier_id;
+
+        return $this->resolve(OpportunityResource::collection(
+            SupplierOpportunity::query()
+                ->with('procurementRequest.catalogItem:id,item_code,code,image_path')
+                ->when($supplierId, function ($query) use ($supplierId) {
+                    $query->where('supplier_id', $supplierId)
+                        ->where('status', 'Open for Quotation')
+                        ->whereDoesntHave('procurementRequest.quotations', function ($quotes) use ($supplierId) {
+                            $quotes->where('supplier_id', $supplierId);
+                        });
+                })
+                ->orderByDesc('id')
+                ->get()
+        ));
     }
 
     private function quotationsPayload(?int $supplierId = null): array
