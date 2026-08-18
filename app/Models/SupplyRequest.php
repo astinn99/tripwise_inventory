@@ -33,6 +33,11 @@ class SupplyRequest extends Model
         return $this->belongsTo(InventoryItem::class);
     }
 
+    public function catalogItem(): BelongsTo
+    {
+        return $this->belongsTo(InventoryItem::class, 'item_code', 'item_code');
+    }
+
     public function logs(): HasMany
     {
         return $this->hasMany(SupplyRequestLog::class);

@@ -61,7 +61,7 @@ export const Dashboard = () => {
   const lowStockCount = inventory.filter(i => i.status === 'LOW STOCK').length;
   const outOfStockCount = inventory.filter(i => i.status === 'OUT OF STOCK').length;
 
-  const pendingSupplyRequests = supplyRequests.filter(r => r.status === 'Received' || r.status === 'For Procurement').length;
+  const pendingSupplyRequests = supplyRequests.filter(r => r.status === 'Pending' || r.status === 'Received' || r.status === 'For Procurement').length;
   const itemsForProcurement = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed').length;
   const pendingQuotations = quotations.filter(q => q.status === 'Submitted').length;
   const totalPOs = purchaseOrders.length;
@@ -72,6 +72,8 @@ export const Dashboard = () => {
   const recentlyReceived = movements.filter(m => m.movementType === 'Receiving').slice(0, 5);
   const recentlyReleased = movements.filter(m => m.movementType === 'Releasing').slice(0, 5);
   const damagedItems = movements.filter(m => m.movementType === 'Damaged');
+  const quarantinedSkus = inventory.filter(i => Number(i.damagedQuantity || 0) > 0).length;
+  const quarantinedUnits = inventory.reduce((sum, i) => sum + Number(i.damagedQuantity || 0), 0);
   const expiringDocuments = documents.filter(d => d.status === 'Expiring Soon' || d.status === 'Expired').length;
 
   // Chart Data Preparation
@@ -238,8 +240,8 @@ export const Dashboard = () => {
             <span className="kpi-title">Damaged Items</span>
             <div className="kpi-icon-box text-danger"><ShieldAlert className="w-5 h-5" /></div>
           </div>
-          <div className="kpi-value text-danger">{damagedItems.length}</div>
-          <div className="kpi-footer text-black">Written-off / Isolated</div>
+          <div className="kpi-value text-danger">{quarantinedSkus}</div>
+          <div className="kpi-footer text-black">{quarantinedUnits} units isolated · {damagedItems.length} logs</div>
         </div>
 
         <div className="kpi-card" onClick={() => setActiveTab('expiring_documents')} style={{ cursor: 'pointer' }}>

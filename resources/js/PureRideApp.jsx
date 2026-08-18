@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import React from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { VendorApp } from './VendorApp';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
+import { BrandLogo } from './components/layout/BrandLogo';
 
 import { Dashboard } from './pages/Dashboard';
 import { Documents } from './pages/Documents';
@@ -30,6 +31,9 @@ import { AddEditItemModal } from './components/modals/AddEditItemModal';
 import { CheckStockModal } from './components/modals/CheckStockModal';
 import { CompareQuotationsModal } from './components/modals/CompareQuotationsModal';
 import { FinanceApprovalModal } from './components/modals/FinanceApprovalModal';
+import { AdjustInventoryModal } from './components/modals/AdjustInventoryModal';
+import { ManualRestockModal } from './components/modals/ManualRestockModal';
+import { EditProcurementModal } from './components/modals/EditProcurementModal';
 import { ReceiveInspectionModal } from './components/modals/ReceiveInspectionModal';
 import { StockCountModal } from './components/modals/StockCountModal';
 
@@ -70,18 +74,14 @@ function InternalApp() {
         activeModal,
         setActiveModal,
     } = useApp();
-    const navigate = useNavigate();
-
-    useEffect(() => {
-        if (!bootLoading && user?.role === 'supplier') {
-            navigate('/vendor', { replace: true });
-        }
-    }, [user, bootLoading, navigate]);
 
     if (bootLoading) {
         return (
             <div className="login-screen">
                 <div className="login-card">
+                    <div className="login-brand">
+                        <BrandLogo variant="login" subtitle="Supply Chain" />
+                    </div>
                     <p className="text-sm font-bold">Loading...</p>
                 </div>
             </div>
@@ -92,18 +92,17 @@ function InternalApp() {
         return (
             <div className="login-screen">
                 <div className="login-card">
+                    <div className="login-brand">
+                        <BrandLogo variant="login" subtitle="Supply Chain" />
+                    </div>
                     <p className="text-sm font-bold">{bootError}</p>
                 </div>
             </div>
         );
     }
 
-    if (!user) {
+    if (!user || user.role === 'supplier') {
         return <Login portal="internal" />;
-    }
-
-    if (user.role === 'supplier') {
-        return null;
     }
 
     const CurrentPage = pageMap[activeTab] || Dashboard;
@@ -165,6 +164,18 @@ function InternalApp() {
                 <StockCountModal
                     onClose={() => setActiveModal(null)}
                 />
+            )}
+
+            {activeModal === 'manual_restock' && (
+                <ManualRestockModal />
+            )}
+
+            {activeModal === 'adjust_stock' && (
+                <AdjustInventoryModal />
+            )}
+
+            {activeModal === 'edit_procurement' && (
+                <EditProcurementModal />
             )}
         </div>
     );

@@ -35,7 +35,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/quotations', [QuotationController::class, 'index']);
     Route::post('/quotations', [QuotationController::class, 'store']);
-    Route::put('/quotations/{quotation}', [QuotationController::class, 'update']);
+    Route::match(['put', 'post'], '/quotations/{quotation}', [QuotationController::class, 'update']);
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::post('/purchase-orders/{purchaseOrder}/confirm', [PurchaseOrderController::class, 'confirm']);
     Route::get('/opportunities', [OpportunityController::class, 'index']);
@@ -47,15 +47,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/inventory-items', [InventoryItemController::class, 'index']);
         Route::get('/inventory-items/{inventoryItem}', [InventoryItemController::class, 'show']);
         Route::post('/inventory-items', [InventoryItemController::class, 'store']);
-        Route::put('/inventory-items/{inventoryItem}', [InventoryItemController::class, 'update']);
+        Route::post('/inventory-items/{inventoryItem}/move', [InventoryItemController::class, 'move']);
+        Route::post('/inventory-items/{inventoryItem}/adjust', [InventoryItemController::class, 'adjust']);
+        Route::match(['put', 'post'], '/inventory-items/{inventoryItem}', [InventoryItemController::class, 'update']);
 
         Route::get('/storage-locations', [StorageLocationController::class, 'index']);
+        Route::post('/storage-locations', [StorageLocationController::class, 'store']);
+        Route::post('/storage-locations/bootstrap', [StorageLocationController::class, 'bootstrap']);
         Route::get('/supply-requests', [SupplyRequestController::class, 'index']);
         Route::post('/supply-requests/{supplyRequest}/check-stock', [SupplyRequestController::class, 'checkStock']);
         Route::post('/supply-requests/{supplyRequest}/release', [SupplyRequestController::class, 'release']);
 
         Route::get('/procurement-requests', [ProcurementRequestController::class, 'index']);
         Route::post('/procurement-requests', [ProcurementRequestController::class, 'store']);
+        Route::put('/procurement-requests/{procurementRequest}', [ProcurementRequestController::class, 'update']);
         Route::post('/procurement-requests/{procurementRequest}/send-to-vendors', [ProcurementRequestController::class, 'sendToVendors']);
 
         Route::post('/quotations/{quotation}/select', [QuotationController::class, 'select']);
@@ -73,6 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/documents', [DocumentController::class, 'index']);
         Route::post('/documents', [DocumentController::class, 'store']);
+        Route::get('/documents/{document}/download', [DocumentController::class, 'download']);
 
         Route::get('/dashboard', DashboardController::class);
         Route::get('/reports', ReportController::class);

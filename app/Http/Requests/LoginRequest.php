@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class LoginRequest extends FormRequest
 {
@@ -16,6 +17,7 @@ class LoginRequest extends FormRequest
         return [
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            'portal' => ['nullable', 'string', Rule::in(['internal', 'vendor'])],
         ];
     }
 }

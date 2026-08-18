@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { ItemIdentity } from '../components/ui/ItemThumb';
 
 export const Quotations = () => {
   const { quotations, selectSupplierAndCreatePO, searchQuery } = useApp();
@@ -56,13 +57,16 @@ export const Quotations = () => {
                   <td className="font-mono text-xs text-purple-400 font-semibold">{q.procurementId}</td>
                   <td className="font-bold text-xs text-primary">{q.supplierName}</td>
                   <td>
-                    <div className="font-bold text-xs text-primary">{q.item}</div>
-                    <div className="text-xs text-secondary font-mono">Qty: {q.quantity}</div>
+                    <ItemIdentity
+                      src={q.imageUrl}
+                      name={q.item}
+                      extra={`Qty: ${q.quantity}`}
+                    />
                   </td>
                   <td className="text-right font-mono text-xs text-secondary">₱{Number(q.unitPrice).toLocaleString()}</td>
                   <td className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
                   <td className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
-                  <td className="text-xs text-secondary">{q.warranty}</td>
+                  <td className="text-xs text-secondary">{q.warrantyLabel || q.warranty || '—'}</td>
                   <td><span className="badge badge-normal">★ {q.qualityRating}</span></td>
                   <td>
                     <span className={`badge badge-${q.status === 'Selected' ? 'supplier-selected' : 'info'}`}>

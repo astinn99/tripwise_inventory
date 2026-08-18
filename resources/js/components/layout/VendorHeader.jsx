@@ -2,7 +2,16 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Bell, User } from 'lucide-react';
 
-export const VendorHeader = () => {
+const pageMeta = {
+  dashboard: { title: 'Dashboard', hint: 'Overview' },
+  opportunities: { title: 'Opportunities', hint: 'Open RFQs' },
+  my_quotes: { title: 'My Quotes', hint: 'Submitted bids' },
+  purchase_orders: { title: 'Purchase Orders', hint: 'Awards' },
+  messages: { title: 'Messages', hint: 'Account' },
+  profile: { title: 'Profile', hint: 'Account' },
+};
+
+export const VendorHeader = ({ activeTab = 'dashboard' }) => {
   const {
     notifications,
     markNotificationRead,
@@ -13,13 +22,14 @@ export const VendorHeader = () => {
 
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const unreadNotifs = notifications.filter((n) => !n.read);
+  const meta = pageMeta[activeTab] || pageMeta.dashboard;
 
   return (
     <header className="app-header">
       <div className="header-left">
         <div>
-          <span className="header-page-label">Vendor Portal</span>
-          <span className="header-page-hint">RFQ workspace</span>
+          <span className="header-page-label">{meta.title}</span>
+          <span className="header-page-hint">{meta.hint}</span>
         </div>
       </div>
 

@@ -16,7 +16,7 @@ class QuotationController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Quotation::query()->with(['procurementRequest', 'supplier'])->orderByDesc('id');
+        $query = Quotation::query()->with(['procurementRequest.catalogItem', 'supplier'])->orderByDesc('id');
 
         if ($request->user()->isSupplier() && $request->user()->supplier_id) {
             $query->where('supplier_id', $request->user()->supplier_id);

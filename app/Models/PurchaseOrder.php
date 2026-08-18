@@ -10,7 +10,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 #[Fillable([
     'po_number', 'procurement_request_id', 'supplier_id', 'supplier',
     'contact_person', 'total_cost', 'budget_reference', 'payment_terms',
-    'procurement_reason', 'delivery_date', 'warranty', 'finance_approval_status',
+    'procurement_reason', 'delivery_date', 'warranty', 'warranty_months',
+    'warranty_file_path', 'finance_approval_status',
     'po_status', 'created_date', 'approver', 'finance_remarks',
 ])]
 class PurchaseOrder extends Model
@@ -20,6 +21,7 @@ class PurchaseOrder extends Model
         return [
             'total_cost' => 'float',
             'created_date' => 'date',
+            'warranty_months' => 'integer',
         ];
     }
 

@@ -17,14 +17,18 @@ class InventoryItemResource extends JsonResource
             'description' => $this->description,
             'category' => $this->category,
             'quantity' => $this->quantity,
+            'damagedQuantity' => (int) $this->damaged_quantity,
             'minStockLevel' => $this->min_stock_level,
             'unit' => $this->unit,
             'supplier' => $this->supplier?->company_name ?? '',
             'cost' => (float) $this->cost,
+            'storageLocationId' => $this->storage_location_id,
             'location' => $this->locationLabel(),
             'serialNumber' => $this->serial_number ?: 'N/A',
             'warranty' => $this->warranty ?: 'N/A',
+            'warrantyExpiresOn' => optional($this->warranty_expires_on)?->format('Y-m-d'),
             'condition' => $this->condition ?: 'N/A',
+            'imageUrl' => $this->imageUrl(),
             'status' => $this->status,
         ];
     }

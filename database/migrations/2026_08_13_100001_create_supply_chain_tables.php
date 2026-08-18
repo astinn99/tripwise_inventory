@@ -82,7 +82,7 @@ return new class extends Migration
             $table->date('required_date')->nullable();
             $table->string('priority', 32)->default('MEDIUM')->index();
             $table->string('stock_availability', 64)->nullable();
-            $table->string('status', 64)->default('Received')->index();
+            $table->string('status', 64)->default('Pending')->index();
             $table->string('requested_by')->nullable();
             $table->text('purpose')->nullable();
             $table->date('date_received')->nullable();

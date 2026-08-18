@@ -1,6 +1,5 @@
 /* Modern, simple UI layer. Colors stay on the existing palette. */
 
-.brand-logo-icon svg,
 .user-avatar svg {
   color: #FFFFFF !important;
 }
@@ -218,24 +217,16 @@
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
   margin-bottom: 1.35rem;
 }
 
-.login-brand-title {
-  font-size: 0.95rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+.login-brand .brand-sub {
+  color: inherit;
+  opacity: 0.62;
 }
 
-.login-brand-sub {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.62;
-  margin-top: 2px;
+.login-screen-inventory .login-brand .brand-wordmark {
+  color: #111827;
 }
 
 .login-card .page-title {
@@ -257,6 +248,171 @@
   margin-top: 1.15rem;
   text-align: center;
   font-size: 0.8rem;
+}
+
+.login-error {
+  background: var(--bg-danger-light);
+  border: 1px solid var(--border-danger);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.login-screen.login-screen-inventory {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: #F8FAFC;
+}
+
+.login-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 6.5rem 2.75rem 2.15rem;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(7, 11, 20, 0.55) 0%, rgba(7, 11, 20, 0.82) 100%),
+    url('/images/login-bg.png') center / cover no-repeat;
+}
+
+.login-hero,
+.login-hero h1,
+.login-hero p,
+.login-hero strong,
+.login-hero-copy,
+.login-hero-copy h1,
+.login-hero-copy p {
+  color: #FFFFFF !important;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+
+.login-hero-brand {
+  position: absolute;
+  top: 2rem;
+  left: 2.75rem;
+  z-index: 1;
+}
+
+.login-hero-brand .brand-sub {
+  color: #FFFFFF;
+  opacity: 0.8;
+}
+
+.login-hero-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 36rem;
+}
+
+.login-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(225, 29, 72, 0.92);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(2rem, 3.4vw, 3.1rem);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+}
+
+.login-hero-copy p {
+  margin: 1rem 0 0;
+  max-width: 32rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+.login-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1.5rem 1.25rem;
+  background: #F8FAFC;
+}
+
+.login-screen-inventory .login-card {
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  margin: 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 1.25rem 1.15rem 1.1rem;
+  box-shadow: var(--shadow-subtle);
+}
+
+.login-screen-inventory .login-brand {
+  margin-bottom: 1rem;
+}
+
+.login-screen-inventory .login-card .page-title {
+  font-size: 1.25rem;
+}
+
+.login-screen-inventory .login-card .page-description {
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+}
+
+.login-screen-inventory .form-group {
+  margin-bottom: 0.8rem;
+}
+
+.login-screen-inventory .login-card .btn-primary {
+  min-height: 38px;
+}
+
+.login-screen-inventory .login-switch {
+  margin-top: 0.9rem;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 960px) {
+  .login-screen.login-screen-inventory {
+    grid-template-columns: 1fr;
+  }
+
+  .login-hero {
+    min-height: 280px;
+    padding: 5rem 1.5rem 1.5rem;
+    justify-content: flex-end;
+  }
+
+  .login-hero-brand {
+    left: 1.5rem;
+  }
+
+  .login-hero-copy h1 {
+    font-size: 1.7rem;
+  }
+
+  .login-panel {
+    min-height: auto;
+  }
+
+  .login-screen-inventory .login-card {
+    max-width: 300px;
+    margin: 1.25rem auto;
+    padding: 1.25rem 1.15rem 1.1rem;
+  }
 }
 
 .login-error {
@@ -374,6 +530,7 @@
 .border-color { border-color: var(--border-subtle) !important; }
 .overflow-hidden { overflow: hidden !important; }
 .min-h-0 { min-height: 0 !important; }
+.min-w-0 { min-width: 0 !important; }
 
 .empty-state {
   padding: 2.5rem 1rem;

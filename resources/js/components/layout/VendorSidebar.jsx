@@ -1,13 +1,13 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { BrandLogo } from './BrandLogo';
 import {
   LayoutDashboard,
   ShoppingBag,
   FileText,
   FileCheck,
   MessageSquare,
-  Building,
-  Store
+  Building
 } from 'lucide-react';
 
 const menuSections = [
@@ -41,13 +41,7 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <div className="brand-logo-icon">
-          <Store className="w-5 h-5" />
-        </div>
-        <div className="brand-text">
-          <span className="brand-name">TRIPWISE</span>
-          <span className="brand-sub">VENDOR PORTAL</span>
-        </div>
+        <BrandLogo subtitle="Vendor Portal" />
       </div>
 
       <nav className="sidebar-nav">

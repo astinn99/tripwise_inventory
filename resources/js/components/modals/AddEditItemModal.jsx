@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Package, Save } from 'lucide-react';
+import { ImagePlus, Package, Save, Trash2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 
 const EMPTY_ITEM = {
@@ -13,9 +13,11 @@ const EMPTY_ITEM = {
   unit: 'Units',
   supplier: '',
   cost: '',
+  storageLocationId: '',
   location: '',
   serialNumber: '',
   warranty: '',
+  warrantyExpiresOn: '',
   condition: ''
 };
 
@@ -27,17 +29,35 @@ const CATEGORY_CODE_PREFIX = {
 };
 
 export const AddEditItemModal = () => {
-  const { activeModal, setActiveModal, modalData, saveInventoryItem } = useApp();
+  const { activeModal, setActiveModal, modalData, saveInventoryItem, storageLocations } = useApp();
 
   const [formData, setFormData] = useState(EMPTY_ITEM);
+  const [imageFile, setImageFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [removeImage, setRemoveImage] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (modalData) {
       setFormData(modalData);
+      setImageFile(null);
+      setRemoveImage(false);
+      setPreviewUrl(modalData.imageUrl || '');
     } else {
       setFormData(EMPTY_ITEM);
+      setImageFile(null);
+      setRemoveImage(false);
+      setPreviewUrl('');
     }
-  }, [modalData]);
+  }, [modalData, activeModal]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   if (activeModal !== 'add_item' && activeModal !== 'edit_item') return null;
 
@@ -52,12 +72,43 @@ export const AddEditItemModal = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    if (previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    setImageFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setRemoveImage(false);
+  };
+
+  const handleRemoveImage = () => {
+    if (previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setImageFile(null);
+    setPreviewUrl('');
+    setRemoveImage(true);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     saveInventoryItem({
       ...formData,
       itemName: formData.description,
       itemCode: formData.itemCode || undefined,
+      storageLocationId: formData.storageLocationId || null,
+      imageFile,
+      removeImage,
     });
     setActiveModal(null);
   };
@@ -81,6 +132,45 @@ export const AddEditItemModal = () => {
         </>
       )}
     >
+      <div className="modal-section">
+        <div className="modal-section-title">Item photo</div>
+        <div className="item-photo-field">
+          <button
+            type="button"
+            className="item-photo-picker"
+            onClick={() => fileInputRef.current?.click()}
+            title={previewUrl ? 'Change photo' : 'Upload photo'}
+          >
+            {previewUrl ? (
+              <img src={previewUrl} alt="" className="item-photo-preview" />
+            ) : (
+              <span className="item-photo-placeholder">
+                <ImagePlus className="w-5 h-5" />
+                <span>Add photo</span>
+              </span>
+            )}
+          </button>
+          <div className="item-photo-actions">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="item-photo-input"
+              onChange={handleImageChange}
+            />
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => fileInputRef.current?.click()}>
+              {previewUrl ? 'Change photo' : 'Upload photo'}
+            </button>
+            {previewUrl ? (
+              <button type="button" className="btn btn-outline btn-sm" onClick={handleRemoveImage}>
+                <Trash2 className="w-3.5 h-3.5" /> Remove
+              </button>
+            ) : null}
+            <p className="item-photo-hint">Optional. JPG, PNG, or WebP up to 5 MB. Shown only on inventory items.</p>
+          </div>
+        </div>
+      </div>
+
       <div className="modal-section">
         <div className="modal-section-title">Item identity</div>
         <div className="grid-2">
@@ -148,28 +238,29 @@ export const AddEditItemModal = () => {
           </div>
           <div className="form-group mb-0">
             <label className="form-label">Storage Location</label>
-            <input
-              type="text"
-              name="location"
-              className="form-control"
-              placeholder="e.g. Rack A -> Shelf 02 -> Bin 05"
-              value={formData.location}
+            <select
+              name="storageLocationId"
+              className="form-select"
+              value={formData.storageLocationId ? String(formData.storageLocationId) : ''}
               onChange={handleChange}
-            />
+            >
+              <option value="">Unassigned</option>
+              {(storageLocations || []).map((loc) => (
+                <option key={loc.id} value={String(loc.id)}>
+                  {loc.label || `${loc.rack} → ${loc.shelf} → ${loc.bin}`}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
 
       <div className="modal-section">
         <div className="modal-section-title">Condition & warranty</div>
-        <div className="grid-3">
+        <div className="grid-2">
           <div className="form-group mb-0">
             <label className="form-label">Serial Number</label>
             <input type="text" name="serialNumber" className="form-control" placeholder="Optional" value={formData.serialNumber} onChange={handleChange} />
-          </div>
-          <div className="form-group mb-0">
-            <label className="form-label">Warranty Expiry</label>
-            <input type="text" name="warranty" className="form-control" placeholder="e.g. 2027-08-15" value={formData.warranty} onChange={handleChange} />
           </div>
           <div className="form-group mb-0">
             <label className="form-label">Item Condition</label>
@@ -180,6 +271,14 @@ export const AddEditItemModal = () => {
               <option value="Fair">Fair</option>
               <option value="Damaged">Damaged</option>
             </select>
+          </div>
+          <div className="form-group mb-0">
+            <label className="form-label">Warranty terms</label>
+            <input type="text" name="warranty" className="form-control" placeholder="e.g. 12 months parts and labor" value={formData.warranty} onChange={handleChange} />
+          </div>
+          <div className="form-group mb-0">
+            <label className="form-label">Warranty Expiry</label>
+            <input type="date" name="warrantyExpiresOn" className="form-control" value={formData.warrantyExpiresOn || ''} onChange={handleChange} />
           </div>
         </div>
       </div>

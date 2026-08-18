@@ -86,12 +86,12 @@ class DepartmentSupplyApiTest extends TestCase
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.requestingDepartment', 'Fleet Operations')
             ->assertJsonPath('data.itemCode', 'FLT-310')
-            ->assertJsonPath('data.status', 'Received')
+            ->assertJsonPath('data.status', 'Pending')
             ->assertJsonPath('data.stockAvailability', 'Insufficient Stock');
 
         $this->assertDatabaseHas('supply_requests', [
             'item_code' => 'FLT-310',
-            'status' => 'Received',
+            'status' => 'Pending',
             'requesting_department' => 'Fleet Operations',
         ]);
         $this->assertSame(1, SupplyRequest::query()->count());

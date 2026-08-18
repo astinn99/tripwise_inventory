@@ -10,6 +10,7 @@ use App\Http\Resources\InventoryItemResource;
 use App\Http\Resources\PurchaseOrderResource;
 use App\Http\Resources\QuotationResource;
 use App\Models\Delivery;
+use App\Models\Document;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\ProcurementRequest;
@@ -18,12 +19,16 @@ use App\Models\PurchaseOrderTimelineStep;
 use App\Models\Quotation;
 use App\Models\Release;
 use App\Models\StockCount;
+use App\Models\StorageLocation;
 use App\Models\Supplier;
 use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
 use App\Support\DocumentCode;
+use App\Support\WarrantyDuration;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class SupplyChainService
@@ -48,7 +53,7 @@ class SupplyChainService
                 'required_date' => $data['requiredDate'] ?? null,
                 'priority' => $data['priority'] ?? 'MEDIUM',
                 'stock_availability' => $available >= $quantity ? 'Stock Available' : 'Insufficient Stock',
-                'status' => 'Received',
+                'status' => 'Pending',
                 'requested_by' => $data['requestedBy'],
                 'purpose' => $data['purpose'] ?? null,
                 'date_received' => now()->toDateString(),
@@ -109,12 +114,10 @@ class SupplyChainService
                 'quantity' => $orderQty,
                 'reason' => "Insufficient stock for {$request->request_number}. Available: {$available}, Requested: {$request->quantity_requested}",
                 'priority' => $request->priority,
-                'status' => 'Quotation',
+                'status' => 'For Procurement',
                 'date_created' => now()->toDateString(),
                 'estimated_cost' => ($item?->cost ?? 1000) * $request->quantity_requested,
             ]);
-
-            $this->sendProcurementToVendors($pr);
 
             $request->update([
                 'stock_availability' => 'Insufficient Stock',
@@ -169,6 +172,8 @@ class SupplyChainService
                 'procurement_reason' => $pr->reason,
                 'delivery_date' => now()->addDays($quote->delivery_time_days ?: 7)->toDateString(),
                 'warranty' => $quote->warranty,
+                'warranty_months' => $quote->warranty_months,
+                'warranty_file_path' => $quote->warranty_file_path,
                 'finance_approval_status' => 'Pending Finance Approval',
                 'po_status' => 'Pending Finance Approval',
                 'created_date' => now()->toDateString(),
@@ -392,6 +397,7 @@ class SupplyChainService
                 $item = InventoryItem::query()->where('item_code', $line['itemCode'])->first();
                 if ($item) {
                     $item->quantity += $qty;
+                    $this->applyReceivedWarranty($item, $delivery->purchaseOrder);
                     $item->save();
                     $this->broadcastStock($item);
                 }
@@ -508,8 +514,138 @@ class SupplyChainService
         });
     }
 
+    public function adjustInventory(InventoryItem $item, array $data, User $actor): InventoryItem
+    {
+        return DB::transaction(function () use ($item, $data, $actor) {
+            $locked = InventoryItem::query()->whereKey($item->id)->lockForUpdate()->firstOrFail();
+            $type = (string) $data['type'];
+            $quantity = (int) $data['quantity'];
+            $reason = trim((string) $data['reason']);
+            $source = $this->resolveAdjustmentSource($type, $data['source'] ?? null, $locked);
+            $pool = $source === 'damaged' ? (int) $locked->damaged_quantity : (int) $locked->quantity;
+
+            if ($quantity > $pool) {
+                $label = $source === 'damaged' ? 'quarantine' : 'available';
+                throw ValidationException::withMessages([
+                    'quantity' => ["Only {$pool} unit(s) available in {$label} stock."],
+                ]);
+            }
+
+            $timestamp = now()->format('Y-m-d H:i');
+            $location = $locked->locationLabel();
+            $reference = $locked->code;
+            $unit = $locked->unit ?: 'Units';
+
+            if ($type === 'Damaged') {
+                $locked->quantity -= $quantity;
+                $locked->damaged_quantity += $quantity;
+                $movementType = 'Damaged';
+                $location = 'Quarantine';
+                $remarks = "Quarantined as damaged. {$reason}";
+                $title = 'Stock Quarantined';
+                $body = "{$quantity} {$unit} of {$locked->item_code} ({$locked->description}) moved to quarantine.";
+                $tone = 'warning';
+            } elseif ($type === 'Disposed' || $type === 'Return') {
+                if ($source === 'damaged') {
+                    $locked->damaged_quantity -= $quantity;
+                    $location = 'Quarantine';
+                    $from = 'quarantine';
+                } else {
+                    $locked->quantity -= $quantity;
+                    $from = 'available stock';
+                }
+                $movementType = $type;
+                $remarks = ($type === 'Return' ? 'Returned to vendor' : 'Disposed')." from {$from}. {$reason}";
+                $title = $type === 'Return' ? 'Returned to Vendor' : 'Stock Disposed';
+                $body = $type === 'Return'
+                    ? "{$quantity} {$unit} of {$locked->item_code} ({$locked->description}) returned to vendor from {$from}."
+                    : "{$quantity} {$unit} of {$locked->item_code} ({$locked->description}) written off as disposed.";
+                $tone = 'warning';
+            } elseif ($type === 'Lost') {
+                $locked->quantity -= $quantity;
+                $movementType = 'Lost';
+                $remarks = "Recorded as lost. {$reason}";
+                $title = 'Stock Lost';
+                $body = "{$quantity} {$unit} of {$locked->item_code} ({$locked->description}) recorded as lost.";
+                $tone = 'warning';
+            } else {
+                $releasedTo = trim((string) ($data['releasedTo'] ?? ''));
+                $department = trim((string) ($data['department'] ?? ''));
+
+                if ($releasedTo === '' || $department === '') {
+                    throw ValidationException::withMessages([
+                        'releasedTo' => ['Recipient and department are required for a manual release.'],
+                    ]);
+                }
+                $releaseNumber = DocumentCode::next('releases', 'release_number', 'REL');
+
+                Release::query()->create([
+                    'release_number' => $releaseNumber,
+                    'supply_request_id' => null,
+                    'request_id' => 'MANUAL',
+                    'requesting_department' => $department,
+                    'item_code' => $locked->item_code,
+                    'item_name' => $locked->description,
+                    'quantity_released' => $quantity,
+                    'approval_status' => 'Manual warehouse issue',
+                    'stock_status' => 'Deducted from Inventory',
+                    'release_date' => $timestamp,
+                    'released_to' => $releasedTo,
+                    'dispatched_by' => $actor->name,
+                ]);
+
+                $locked->quantity -= $quantity;
+                $movementType = 'Releasing';
+                $location = 'Dispatch Area';
+                $reference = "{$releaseNumber} / MANUAL";
+                $remarks = "Manual release to {$department} rep: {$releasedTo}. {$reason}";
+                $title = 'Stock Released to Department';
+                $body = "{$locked->item_code} ({$locked->description} x{$quantity}) manually released to {$releasedTo} ({$department}).";
+                $tone = 'success';
+            }
+
+            $locked->save();
+
+            InventoryMovement::query()->create([
+                'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+                'inventory_item_id' => $locked->id,
+                'item_code' => $locked->item_code,
+                'item_name' => $locked->description,
+                'movement_type' => $movementType,
+                'quantity' => $quantity,
+                'moved_at' => $timestamp,
+                'location' => $location,
+                'reference' => $reference,
+                'remarks' => $remarks,
+                'recorded_by' => $actor->name,
+            ]);
+
+            $this->notifications->create($title, $body, 'stock', $tone);
+            $this->broadcastStock($locked);
+
+            return $locked->fresh(['supplier', 'storageLocation']);
+        });
+    }
+
+    private function resolveAdjustmentSource(string $type, mixed $source, InventoryItem $item): string
+    {
+        if (in_array($type, ['Damaged', 'Lost', 'ManualRelease'], true)) {
+            return 'available';
+        }
+
+        if ($source === 'available' || $source === 'damaged') {
+            return $source;
+        }
+
+        return (int) $item->damaged_quantity > 0 ? 'damaged' : 'available';
+    }
+
     public function saveInventoryItem(array $data, ?InventoryItem $existing = null): InventoryItem
     {
+        $image = $data['image'] ?? null;
+        $removeImage = (bool) ($data['removeImage'] ?? false);
+        unset($data['image'], $data['removeImage']);
+
         $supplier = isset($data['supplier'])
             ? Supplier::query()->where('company_name', $data['supplier'])->orWhere('code', $data['supplier'])->first()
             : $existing?->supplier;
@@ -522,8 +658,10 @@ class SupplyChainService
             'unit' => $data['unit'] ?? 'Units',
             'supplier_id' => $supplier?->id,
             'cost' => (float) $data['cost'],
+            'storage_location_id' => $this->resolveStorageLocationId($data, $existing),
             'serial_number' => $data['serialNumber'] ?? 'N/A',
             'warranty' => $data['warranty'] ?? 'N/A',
+            'warranty_expires_on' => filled($data['warrantyExpiresOn'] ?? null) ? $data['warrantyExpiresOn'] : ($existing?->warranty_expires_on),
             'condition' => $data['condition'] ?? 'New',
         ];
 
@@ -540,9 +678,176 @@ class SupplyChainService
             $this->notifications->create('New Item Added', "Item {$item->item_code} added to inventory.", 'stock', 'success');
         }
 
+        if ($image instanceof UploadedFile) {
+            $this->storeInventoryItemImage($item, $image);
+            $item = $item->fresh(['supplier', 'storageLocation']);
+        } elseif ($removeImage) {
+            $this->deleteInventoryItemImage($item);
+            $item = $item->fresh(['supplier', 'storageLocation']);
+        }
+
         $this->broadcastStock($item);
 
         return $item;
+    }
+
+    private function storeInventoryItemImage(InventoryItem $item, UploadedFile $image): void
+    {
+        $oldPath = $item->image_path;
+        $extension = strtolower($image->guessExtension() ?: $image->getClientOriginalExtension() ?: 'jpg');
+
+        if (! in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif'], true)) {
+            $extension = 'jpg';
+        }
+
+        $path = $image->storeAs('inventory-items', $item->code.'.'.$extension, 'public');
+
+        if ($oldPath && $oldPath !== $path) {
+            $this->deleteStoredInventoryImage($oldPath);
+        }
+
+        $item->forceFill(['image_path' => $path])->save();
+    }
+
+    private function deleteInventoryItemImage(InventoryItem $item): void
+    {
+        $this->deleteStoredInventoryImage($item->image_path);
+        $item->forceFill(['image_path' => null])->save();
+    }
+
+    private function deleteStoredInventoryImage(?string $path): void
+    {
+        if ($path && Storage::disk('public')->exists($path)) {
+            Storage::disk('public')->delete($path);
+        }
+    }
+
+    public function createStorageLocation(array $data): StorageLocation
+    {
+        return StorageLocation::query()->create([
+            'rack' => $data['rack'],
+            'shelf' => $data['shelf'],
+            'bin' => $data['bin'],
+            'category' => $data['category'] ?? null,
+            'max_capacity' => (int) ($data['maxCapacity'] ?? 50),
+        ]);
+    }
+
+    public function bootstrapWarehouseLayout(): int
+    {
+        $racks = [
+            'Rack A' => 'Office Supplies',
+            'Rack B' => 'Communication Devices',
+            'Rack C' => 'Maintenance Tools',
+            'Rack D' => 'Fleet Consumables',
+        ];
+
+        $created = 0;
+
+        foreach ($racks as $rack => $category) {
+            foreach (['Shelf 01', 'Shelf 02', 'Shelf 03'] as $shelf) {
+                foreach (['Bin 01', 'Bin 02', 'Bin 03', 'Bin 04'] as $bin) {
+                    $location = StorageLocation::query()->firstOrCreate(
+                        compact('rack', 'shelf', 'bin'),
+                        [
+                            'category' => $category,
+                            'max_capacity' => 50,
+                        ]
+                    );
+
+                    if ($location->wasRecentlyCreated) {
+                        $created++;
+                    }
+                }
+            }
+        }
+
+        return $created;
+    }
+
+    public function moveInventoryItem(InventoryItem $item, mixed $storageLocationId, User $actor): InventoryItem
+    {
+        $item->loadMissing('storageLocation');
+        $from = $item->locationLabel();
+        $locationId = $storageLocationId === null || $storageLocationId === ''
+            ? null
+            : (int) $storageLocationId;
+
+        if ($locationId !== null && (int) $item->storage_location_id === $locationId) {
+            return $item->fresh(['supplier', 'storageLocation']);
+        }
+
+        if ($locationId === null && $item->storage_location_id === null) {
+            return $item->fresh(['supplier', 'storageLocation']);
+        }
+
+        $location = $locationId ? StorageLocation::query()->findOrFail($locationId) : null;
+        $item->storage_location_id = $location?->id;
+        $item->save();
+
+        $item = $item->fresh(['supplier', 'storageLocation']);
+        $to = $item->locationLabel();
+        $timestamp = now()->format('Y-m-d H:i');
+
+        InventoryMovement::query()->create([
+            'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+            'inventory_item_id' => $item->id,
+            'item_code' => $item->item_code,
+            'item_name' => $item->description,
+            'movement_type' => 'Transfer',
+            'quantity' => $item->quantity,
+            'moved_at' => $timestamp,
+            'location' => $to,
+            'reference' => $item->code,
+            'remarks' => "Moved from {$from} to {$to}.",
+            'recorded_by' => $actor->name,
+        ]);
+
+        $this->notifications->create(
+            'Item Relocated',
+            "{$item->item_code} ({$item->description}) moved from {$from} to {$to}.",
+            'stock',
+            'info'
+        );
+
+        $this->broadcastStock($item);
+
+        return $item;
+    }
+
+    public function placeUnassignedItems(): int
+    {
+        $placed = 0;
+        $items = InventoryItem::query()->whereNull('storage_location_id')->orderBy('item_code')->get();
+
+        foreach ($items as $item) {
+            $location = StorageLocation::query()
+                ->where('category', $item->category)
+                ->withCount('inventoryItems')
+                ->orderBy('inventory_items_count')
+                ->orderBy('rack')
+                ->orderBy('shelf')
+                ->orderBy('bin')
+                ->first();
+
+            if (! $location) {
+                $location = StorageLocation::query()
+                    ->withCount('inventoryItems')
+                    ->orderBy('inventory_items_count')
+                    ->orderBy('id')
+                    ->first();
+            }
+
+            if (! $location) {
+                continue;
+            }
+
+            $item->storage_location_id = $location->id;
+            $item->save();
+            $placed++;
+        }
+
+        return $placed;
     }
 
     public function submitPhysicalCount(StockCount $count, array $items, User $actor): StockCount
@@ -575,7 +880,7 @@ class SupplyChainService
                     'inventory_item_id' => $item?->id,
                     'item_code' => $line['itemCode'],
                     'item_name' => $line['itemName'] ?? $line['itemCode'],
-                    'movement_type' => $variance < 0 ? 'Damaged' : 'Receiving',
+                    'movement_type' => $variance < 0 ? 'Adjustment' : 'Receiving',
                     'quantity' => abs($variance),
                     'moved_at' => now()->format('Y-m-d H:i'),
                     'location' => 'Stock Audit Adjustments',
@@ -660,6 +965,9 @@ class SupplyChainService
             }
         }
 
+        $warrantyFile = $data['warrantyFile'] ?? null;
+        unset($data['warrantyFile']);
+
         $quote = Quotation::query()->create([
             'quote_number' => DocumentCode::next('quotations', 'quote_number', 'QT'),
             'procurement_request_id' => $pr->id,
@@ -670,12 +978,17 @@ class SupplyChainService
             'unit_price' => (float) $data['unitPrice'],
             'total_price' => (float) $data['totalPrice'],
             'warranty' => $data['warranty'] ?? null,
+            'warranty_months' => WarrantyDuration::months($data['warrantyMonths'] ?? null, $data['warranty'] ?? null),
             'delivery_time_days' => (int) ($data['deliveryTimeDays'] ?? 0),
             'quality_rating' => (float) ($data['qualityRating'] ?? ($supplier?->rating ?? 0)),
             'payment_terms' => $data['paymentTerms'] ?? '30 Days Net',
             'status' => 'Submitted',
             'notes' => $data['notes'] ?? null,
         ]);
+
+        if ($warrantyFile instanceof UploadedFile) {
+            $this->storeWarrantyFile($quote, $warrantyFile);
+        }
 
         $pr->update(['status' => 'Evaluation']);
 
@@ -715,15 +1028,26 @@ class SupplyChainService
             ]);
         }
 
+        $warrantyFile = $data['warrantyFile'] ?? null;
+        unset($data['warrantyFile']);
+
         $unitPrice = (float) $data['unitPrice'];
         $quote->update([
             'unit_price' => $unitPrice,
             'total_price' => $unitPrice * (int) $quote->quantity,
             'warranty' => $data['warranty'] ?? $quote->warranty,
+            'warranty_months' => WarrantyDuration::months(
+                $data['warrantyMonths'] ?? $quote->warranty_months,
+                $data['warranty'] ?? $quote->warranty
+            ),
             'delivery_time_days' => (int) ($data['deliveryTimeDays'] ?? $quote->delivery_time_days),
             'payment_terms' => $data['paymentTerms'] ?? $quote->payment_terms,
             'notes' => $data['notes'] ?? $quote->notes,
         ]);
+
+        if ($warrantyFile instanceof UploadedFile) {
+            $this->storeWarrantyFile($quote, $warrantyFile);
+        }
 
         $quote = $quote->fresh(['procurementRequest', 'supplier']);
 
@@ -757,9 +1081,28 @@ class SupplyChainService
             'estimated_cost' => ($item->cost ?: 1000) * $quantity,
         ]);
 
-        $this->sendProcurementToVendors($pr);
-
         return $pr;
+    }
+
+    public function updateProcurementRequest(ProcurementRequest $pr, array $data): ProcurementRequest
+    {
+        if ($pr->status !== 'For Procurement' || filled($pr->po_number)) {
+            throw ValidationException::withMessages([
+                'procurementRequest' => 'This request has already been sent to vendors and can no longer be edited.',
+            ]);
+        }
+
+        $item = InventoryItem::query()->where('item_code', $pr->item_code)->first();
+        $quantity = (int) ($data['quantity'] ?? $pr->quantity);
+
+        $pr->update([
+            'quantity' => $quantity,
+            'reason' => $data['reason'] ?? $pr->reason,
+            'priority' => $data['priority'] ?? $pr->priority,
+            'estimated_cost' => ($item?->cost ?: 1000) * $quantity,
+        ]);
+
+        return $pr->fresh()->loadCount('opportunities');
     }
 
     public function sendProcurementToVendors(ProcurementRequest $pr): int
@@ -847,6 +1190,36 @@ class SupplyChainService
         return $invited;
     }
 
+    private function resolveStorageLocationId(array $data, ?InventoryItem $existing): ?int
+    {
+        if (array_key_exists('storageLocationId', $data)) {
+            $id = $data['storageLocationId'];
+
+            return $id === null || $id === '' ? null : (int) $id;
+        }
+
+        $label = trim((string) ($data['location'] ?? ''));
+        if ($label === '' || strcasecmp($label, 'Unassigned') === 0) {
+            return $existing?->storage_location_id;
+        }
+
+        $normalized = str_replace(['→', '—', '–'], '->', $label);
+        $parts = array_values(array_filter(array_map('trim', explode('->', $normalized))));
+        if (count($parts) >= 3) {
+            $match = StorageLocation::query()
+                ->where('rack', $parts[0])
+                ->where('shelf', $parts[1])
+                ->where('bin', $parts[2])
+                ->first();
+
+            if ($match) {
+                return $match->id;
+            }
+        }
+
+        return $existing?->storage_location_id;
+    }
+
     private function createDefaultTimeline(PurchaseOrder $po, string $timestamp): void
     {
         $steps = [
@@ -891,6 +1264,175 @@ class SupplyChainService
         } catch (\Throwable) {
             // Broadcasting is optional during tests and local bootstrap.
         }
+    }
+
+    public function archiveDocument(array $data, ?UploadedFile $file = null): Document
+    {
+        $item = filled($data['itemCode'] ?? null)
+            ? InventoryItem::query()->where('item_code', $data['itemCode'])->first()
+            : null;
+        $po = filled($data['purchaseOrderNumber'] ?? null)
+            ? PurchaseOrder::query()->where('po_number', $data['purchaseOrderNumber'])->first()
+            : null;
+        $supplier = $this->resolveSupplier($data['supplierId'] ?? null, $data['supplier'] ?? null);
+
+        $number = DocumentCode::next('documents', 'document_number', 'DOC');
+        $filePath = null;
+        $fileSize = null;
+        $originalName = null;
+
+        if ($file instanceof UploadedFile) {
+            $filePath = $this->storePublicUpload($file, 'dtrs-documents', $number);
+            $fileSize = $this->humanFileSize($file->getSize());
+            $originalName = $file->getClientOriginalName();
+        }
+
+        $doc = Document::query()->create([
+            'document_number' => $number,
+            'title' => $data['title'],
+            'type' => $data['type'],
+            'reference_number' => $data['referenceNumber'] ?? $po?->po_number,
+            'supplier' => $supplier?->company_name ?? ($data['supplier'] ?? null),
+            'issue_date' => $data['issueDate'] ?? now()->toDateString(),
+            'expiration_date' => $data['expirationDate'] ?? null,
+            'status' => 'Active',
+            'category' => $data['category'] ?? $item?->category,
+            'file_size' => $fileSize,
+            'file_path' => $filePath,
+            'original_filename' => $originalName,
+            'source' => $data['source'] ?? 'manual',
+            'warranty_months' => WarrantyDuration::months($data['warrantyMonths'] ?? null, null),
+            'inventory_item_id' => $item?->id,
+            'purchase_order_id' => $po?->id,
+            'quotation_id' => $data['quotationId'] ?? null,
+            'supplier_id' => $supplier?->id,
+        ]);
+
+        $this->notifications->create(
+            'Document Archived',
+            "Document \"{$doc->title}\" uploaded into DTRS.",
+            'document',
+            'info'
+        );
+
+        return $doc->fresh(['inventoryItem', 'purchaseOrder', 'supplierAccount']);
+    }
+
+    private function resolveSupplier(mixed $supplierId = null, ?string $name = null): ?Supplier
+    {
+        if (filled($supplierId)) {
+            $match = Supplier::query()
+                ->where('code', $supplierId)
+                ->when(is_numeric($supplierId), fn ($query) => $query->orWhere('id', $supplierId))
+                ->first();
+            if ($match) {
+                return $match;
+            }
+        }
+
+        if (! filled($name)) {
+            return null;
+        }
+
+        return Supplier::query()
+            ->where('company_name', $name)
+            ->orWhere('code', $name)
+            ->first();
+    }
+
+    private function applyReceivedWarranty(InventoryItem $item, ?PurchaseOrder $po): void
+    {
+        if (! $po) {
+            return;
+        }
+
+        $months = WarrantyDuration::months($po->warranty_months, $po->warranty);
+        if ($months) {
+            $item->warranty_expires_on = now()->addMonths($months)->toDateString();
+        }
+
+        if (filled($po->warranty)) {
+            $item->warranty = $po->warranty;
+        }
+
+        $already = Document::query()
+            ->where('purchase_order_id', $po->id)
+            ->where('inventory_item_id', $item->id)
+            ->where('type', 'Warranty')
+            ->exists();
+
+        if ($already) {
+            return;
+        }
+
+        $number = DocumentCode::next('documents', 'document_number', 'DOC');
+        $filePath = null;
+        $fileSize = null;
+        $originalName = null;
+
+        if ($po->warranty_file_path && Storage::disk('public')->exists($po->warranty_file_path)) {
+            $extension = pathinfo($po->warranty_file_path, PATHINFO_EXTENSION) ?: 'pdf';
+            $filePath = 'dtrs-documents/'.$number.'.'.$extension;
+            Storage::disk('public')->copy($po->warranty_file_path, $filePath);
+            $fileSize = $this->humanFileSize((int) Storage::disk('public')->size($filePath));
+            $originalName = basename($po->warranty_file_path);
+        }
+
+        Document::query()->create([
+            'document_number' => $number,
+            'title' => $item->description.' warranty',
+            'type' => 'Warranty',
+            'reference_number' => $po->po_number,
+            'supplier' => $po->supplier,
+            'issue_date' => now()->toDateString(),
+            'expiration_date' => $item->warranty_expires_on,
+            'status' => 'Active',
+            'category' => $item->category,
+            'file_size' => $fileSize,
+            'file_path' => $filePath,
+            'original_filename' => $originalName,
+            'source' => 'receiving',
+            'warranty_months' => $months,
+            'inventory_item_id' => $item->id,
+            'purchase_order_id' => $po->id,
+            'supplier_id' => $po->supplier_id,
+        ]);
+    }
+
+    private function storeWarrantyFile(Quotation $quote, UploadedFile $file): void
+    {
+        $oldPath = $quote->warranty_file_path;
+        $path = $this->storePublicUpload($file, 'quotation-warranties', $quote->quote_number);
+
+        if ($oldPath && $oldPath !== $path && Storage::disk('public')->exists($oldPath)) {
+            Storage::disk('public')->delete($oldPath);
+        }
+
+        $quote->forceFill(['warranty_file_path' => $path])->save();
+    }
+
+    private function storePublicUpload(UploadedFile $file, string $directory, string $basename): string
+    {
+        $extension = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: 'pdf');
+        $allowed = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
+        if (! in_array($extension, $allowed, true)) {
+            $extension = 'pdf';
+        }
+
+        return $file->storeAs($directory, $basename.'.'.$extension, 'public');
+    }
+
+    private function humanFileSize(int $bytes): string
+    {
+        if ($bytes < 1024) {
+            return $bytes.' B';
+        }
+
+        if ($bytes < 1048576) {
+            return round($bytes / 1024, 1).' KB';
+        }
+
+        return round($bytes / 1048576, 1).' MB';
     }
 
     private function nextItemCode(string $category): string

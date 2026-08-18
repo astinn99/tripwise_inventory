@@ -1,5 +1,6 @@
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
+import { getAuthToken } from './services/api';
 
 window.Pusher = Pusher;
 
@@ -13,6 +14,8 @@ export function createEcho() {
     if (!key) {
         return null;
     }
+
+    const token = getAuthToken();
 
     return new Echo({
         broadcaster: 'reverb',
@@ -28,6 +31,7 @@ export function createEcho() {
                 Accept: 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
                 'X-XSRF-TOKEN': readCookie('XSRF-TOKEN'),
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
         },
         withCredentials: true,

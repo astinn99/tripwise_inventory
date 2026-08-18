@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { BrandLogo } from './BrandLogo';
 import {
   LayoutDashboard,
   ClipboardList,
@@ -35,7 +36,7 @@ export const Sidebar = () => {
   } = useApp();
 
   // Badges calculation
-  const pendingRequestsCount = supplyRequests.filter(r => r.status === 'Received' || r.status === 'For Procurement').length;
+  const pendingRequestsCount = supplyRequests.filter(r => r.status === 'Pending' || r.status === 'Received' || r.status === 'For Procurement').length;
   const activePRCount = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed').length;
   const pendingFinanceCount = purchaseOrders.filter(p => p.poStatus === 'Pending Finance Approval').length;
   const lowStockCount = inventory.filter(i => i.status === 'LOW STOCK' || i.status === 'OUT OF STOCK').length;
@@ -99,13 +100,7 @@ export const Sidebar = () => {
     <aside className="sidebar">
       {/* Brand Header */}
       <div className="sidebar-brand">
-        <div className="brand-logo-icon">
-            <Package className="w-5 h-5" />
-        </div>
-        <div className="brand-text">
-          <span className="brand-name">TRIPWISE</span>
-          <span className="brand-sub">SUPPLY CHAIN & INVENTORY</span>
-        </div>
+        <BrandLogo subtitle="Supply Chain & Inventory" />
       </div>
 
       {/* Navigation List */}

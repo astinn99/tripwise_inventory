@@ -19,30 +19,40 @@
   padding: 1.15rem 1.1rem 1.05rem;
   display: flex;
   align-items: center;
-  gap: 0.7rem;
   border-bottom: 1px solid var(--bg-sidebar-secondary);
   background: var(--bg-sidebar);
 }
 
-.brand-logo-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #E11D48 0%, #F43F5E 100%);
+.brand-lockup {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #FFFFFF;
-  box-shadow: 0 4px 10px rgba(225, 29, 72, 0.3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  min-width: 0;
 }
 
-.brand-name {
+.brand-wordmark {
   display: block;
-  font-size: 1.05rem;
+  font-size: 1.35rem;
   font-weight: 800;
-  color: #FFFFFF;
-  line-height: 1.1;
-  letter-spacing: -0.015em;
+  color: #E5E7EB;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  text-transform: none !important;
+}
+
+.brand-period {
+  color: #E11D48 !important;
+}
+
+.brand-lockup-login .brand-wordmark {
+  font-size: 1.25rem;
+  color: #111827;
+}
+
+.brand-lockup-hero .brand-wordmark {
+  font-size: 1.45rem;
+  color: #F3F4F6;
 }
 
 .brand-sub {
@@ -52,7 +62,6 @@
   color: var(--text-sidebar);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-top: 1px;
 }
 
 .sidebar-nav {

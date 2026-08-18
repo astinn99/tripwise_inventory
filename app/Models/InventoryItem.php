@@ -10,9 +10,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
-    'code', 'item_code', 'description', 'category', 'quantity', 'min_stock_level',
+    'code', 'item_code', 'description', 'category', 'quantity', 'damaged_quantity', 'min_stock_level',
     'unit', 'supplier_id', 'cost', 'storage_location_id', 'serial_number',
-    'warranty', 'condition', 'status',
+    'warranty', 'warranty_expires_on', 'condition', 'image_path', 'status',
 ])]
 class InventoryItem extends Model
 {
@@ -28,7 +28,9 @@ class InventoryItem extends Model
         return [
             'cost' => 'float',
             'quantity' => 'integer',
+            'damaged_quantity' => 'integer',
             'min_stock_level' => 'integer',
+            'warranty_expires_on' => 'date',
         ];
     }
 
@@ -59,8 +61,22 @@ class InventoryItem extends Model
         return $this->hasMany(InventoryMovement::class);
     }
 
+    public function documents(): HasMany
+    {
+        return $this->hasMany(Document::class);
+    }
+
     public function locationLabel(): string
     {
         return $this->storageLocation?->label() ?? 'Unassigned';
+    }
+
+    public function imageUrl(): ?string
+    {
+        if (! $this->image_path) {
+            return null;
+        }
+
+        return asset('storage/'.$this->image_path);
     }
 }

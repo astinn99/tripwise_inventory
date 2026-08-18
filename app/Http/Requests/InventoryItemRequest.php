@@ -21,6 +21,20 @@ class InventoryItemRequest extends FormRequest
         if (! $this->filled('itemCode')) {
             $this->merge(['itemCode' => null]);
         }
+
+        if ($this->exists('storageLocationId') && ! $this->filled('storageLocationId')) {
+            $this->merge(['storageLocationId' => null]);
+        }
+
+        if ($this->exists('warrantyExpiresOn') && ! $this->filled('warrantyExpiresOn')) {
+            $this->merge(['warrantyExpiresOn' => null]);
+        }
+
+        if ($this->exists('removeImage')) {
+            $this->merge([
+                'removeImage' => filter_var($this->input('removeImage'), FILTER_VALIDATE_BOOLEAN),
+            ]);
+        }
     }
 
     public function rules(): array
@@ -37,10 +51,14 @@ class InventoryItemRequest extends FormRequest
             'unit' => ['nullable', 'string', 'max:64'],
             'supplier' => ['nullable', 'string', 'max:255'],
             'cost' => ['required', 'numeric', 'min:0'],
+            'storageLocationId' => ['nullable', 'integer', 'exists:storage_locations,id'],
             'location' => ['nullable', 'string', 'max:255'],
             'serialNumber' => ['nullable', 'string', 'max:128'],
             'warranty' => ['nullable', 'string', 'max:255'],
+            'warrantyExpiresOn' => ['nullable', 'date'],
             'condition' => ['nullable', 'string', 'max:64'],
+            'image' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp,gif', 'max:5120'],
+            'removeImage' => ['sometimes', 'boolean'],
         ];
     }
 }

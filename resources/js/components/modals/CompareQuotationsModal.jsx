@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { FileSpreadsheet, Truck, Shield, DollarSign, CheckCircle2, Award, Star } from 'lucide-react';
 import { Modal } from '../ui/Modal';
+import { ItemThumb } from '../ui/ItemThumb';
 
 export const CompareQuotationsModal = () => {
   const { activeModal, setActiveModal, modalData, quotations, selectSupplierAndCreatePO } = useApp();
@@ -32,6 +33,7 @@ export const CompareQuotationsModal = () => {
       )}
     >
       <div className="modal-hero">
+        <ItemThumb src={pr.imageUrl} alt={pr.itemName} size="md" />
         <div className="modal-hero-main">
           <div className="modal-kicker">{pr.department}</div>
           <h4>{pr.itemName}</h4>
@@ -94,7 +96,7 @@ export const CompareQuotationsModal = () => {
                     </div>
                     <div className="modal-dl-row">
                       <span><Shield className="w-3.5 h-3.5" /> Warranty</span>
-                      <strong>{quote.warranty}</strong>
+                      <strong>{quote.warrantyLabel || quote.warranty || '—'}</strong>
                     </div>
                     <div className="modal-dl-row">
                       <span><DollarSign className="w-3.5 h-3.5" /> Payment</span>

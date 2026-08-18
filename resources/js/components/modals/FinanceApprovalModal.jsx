@@ -10,8 +10,13 @@ export const FinanceApprovalModal = () => {
   if (activeModal !== 'finance_approval' || !modalData) return null;
 
   const po = modalData;
+  const isPendingReview = po.financeApprovalStatus === 'Pending Finance Approval'
+    || po.poStatus === 'Pending Finance Approval';
 
   const handleAction = (status) => {
+    if (!isPendingReview) {
+      return;
+    }
     updateFinanceApproval(po.poNumber, status, remarks);
     setActiveModal(null);
   };
@@ -23,8 +28,10 @@ export const FinanceApprovalModal = () => {
       tone="amber"
       size="lg"
       title="Finance Approval Checkpoint"
-      subtitle={`Review and decide on purchase order ${po.poNumber} before supplier dispatch.`}
-      footer={(
+      subtitle={isPendingReview
+        ? `Review and decide on purchase order ${po.poNumber} before supplier dispatch.`
+        : `Purchase order ${po.poNumber} has already been decided by Finance.`}
+      footer={isPendingReview ? (
         <>
           <button onClick={() => handleAction('Returned for Revision')} className="btn btn-warning btn-sm">
             <RotateCcw className="w-3.5 h-3.5" /> Return for Revision
@@ -36,6 +43,10 @@ export const FinanceApprovalModal = () => {
             <CheckCircle className="w-3.5 h-3.5" /> Approve PO
           </button>
         </>
+      ) : (
+        <button onClick={() => setActiveModal(null)} className="btn btn-outline btn-sm">
+          Close
+        </button>
       )}
     >
       <div className="checkpoint-card">
@@ -44,7 +55,9 @@ export const FinanceApprovalModal = () => {
           <span>External subsystem workflow</span>
         </div>
         <p className="text-xs leading-relaxed">
-          Finance approval is required before this purchase order can be dispatched. Review the purchase details forwarded by Supply Chain.
+          {isPendingReview
+            ? 'Finance approval is required before this purchase order can be dispatched. Review the purchase details forwarded by Supply Chain.'
+            : `This purchase order is already marked ${displayValue(po.financeApprovalStatus)}. Approval actions are no longer available.`}
         </p>
       </div>
 
@@ -115,8 +128,10 @@ export const FinanceApprovalModal = () => {
           className="form-control text-xs"
           rows="2"
           placeholder="Enter approval or revision notes (e.g. Verified against budget line FLT-08)."
-          value={remarks}
+          value={isPendingReview ? remarks : (po.financeRemarks || remarks)}
           onChange={(e) => setRemarks(e.target.value)}
+          disabled={!isPendingReview}
+          readOnly={!isPendingReview}
         />
       </div>
     </Modal>

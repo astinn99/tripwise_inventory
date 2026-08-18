@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { api, ApiError, resetCsrf } from '../services/api';
+import { useLocation } from 'react-router-dom';
+import { api, ApiError, getAuthToken, resetCsrf, setAuthToken } from '../services/api';
 import { createEcho } from '../echo';
 
 const AppContext = createContext();
@@ -24,10 +24,24 @@ const emptyCollections = {
     lowStockTrend: [],
 };
 
+const withoutToken = (payload) => {
+    if (!payload) {
+        return null;
+    }
+
+    const { token, ...user } = payload;
+    return user;
+};
+
 export const AppProvider = ({ children }) => {
+    const location = useLocation();
+    const isVendorPortal = location.pathname.startsWith('/vendor');
+    const portal = isVendorPortal ? 'vendor' : 'internal';
+
     const [activeTab, setActiveTab] = useState('dashboard');
     const [searchQuery, setSearchQuery] = useState('');
-    const [user, setUser] = useState(null);
+    const [internalUser, setInternalUser] = useState(null);
+    const [vendorUser, setVendorUser] = useState(null);
     const [bootLoading, setBootLoading] = useState(true);
     const [bootError, setBootError] = useState('');
     const [actionError, setActionError] = useState('');
@@ -36,21 +50,30 @@ export const AppProvider = ({ children }) => {
     const [activeModal, setActiveModal] = useState(null);
     const [modalData, setModalData] = useState(null);
     const echoRef = useRef(null);
-    const navigate = useNavigate();
-    const location = useLocation();
 
-    const applyUser = (nextUser) => {
-        setUser(nextUser);
-        if (nextUser?.role === 'supplier') {
-            if (!location.pathname.startsWith('/vendor')) {
-                navigate('/vendor', { replace: true });
-            }
+    const user = isVendorPortal ? vendorUser : internalUser;
+
+    const setPortalUser = (nextUser, targetPortal = portal) => {
+        if (targetPortal === 'vendor') {
+            setVendorUser(nextUser);
             return;
         }
 
-        if (nextUser && location.pathname.startsWith('/vendor')) {
-            navigate('/', { replace: true });
+        setInternalUser(nextUser);
+    };
+
+    const applyUser = (nextUser, targetPortal = portal) => {
+        const role = nextUser?.role;
+        const allowed = targetPortal === 'vendor' ? role === 'supplier' : role === 'supply_chain';
+
+        if (nextUser && !allowed) {
+            setAuthToken('', targetPortal);
+            setPortalUser(null, targetPortal);
+            return null;
         }
+
+        setPortalUser(nextUser, targetPortal);
+        return nextUser;
     };
 
     const loadCollections = async (currentUser = user) => {
@@ -139,7 +162,8 @@ export const AppProvider = ({ children }) => {
             return result;
         } catch (error) {
             if (error instanceof ApiError && error.status === 401) {
-                setUser(null);
+                setAuthToken('', portal);
+                setPortalUser(null, portal);
                 setCollections(emptyCollections);
             }
             setActionError(error.message || 'Request failed');
@@ -155,15 +179,26 @@ export const AppProvider = ({ children }) => {
         const bootstrap = async () => {
             setBootLoading(true);
             setBootError('');
+            setCollections(emptyCollections);
+
+            if (!getAuthToken(portal)) {
+                setPortalUser(null, portal);
+                setBootLoading(false);
+                return;
+            }
+
             try {
-                const current = await api.get('/api/user');
+                const current = await api.get('/api/user', { portal });
                 if (cancelled) return;
-                applyUser(current);
-                await loadCollections(current);
+                const nextUser = applyUser(current, portal);
+                if (nextUser) {
+                    await loadCollections(nextUser);
+                }
             } catch (error) {
                 if (cancelled) return;
                 if (error instanceof ApiError && error.status === 401) {
-                    setUser(null);
+                    setAuthToken('', portal);
+                    setPortalUser(null, portal);
                 } else {
                     setBootError(error.message || 'Unable to load the application.');
                 }
@@ -178,7 +213,7 @@ export const AppProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [portal]);
 
     useEffect(() => {
         if (!user) {
@@ -222,22 +257,24 @@ export const AppProvider = ({ children }) => {
         };
     }, [user?.id]);
 
-    const login = async (email, password) => {
+    const login = async (email, password, targetPortal = portal) => {
         resetCsrf();
-        const current = await api.post('/api/login', { email, password });
-        applyUser(current);
+        const payload = await api.post('/api/login', { email, password, portal: targetPortal }, { portal: targetPortal });
+        setAuthToken(payload.token, targetPortal);
+        const current = applyUser(withoutToken(payload), targetPortal);
         await loadCollections(current);
         return current;
     };
 
     const logout = async () => {
         try {
-            await api.post('/api/logout');
+            await api.post('/api/logout', {}, { portal });
         } finally {
             echoRef.current?.disconnect();
             echoRef.current = null;
             resetCsrf();
-            setUser(null);
+            setAuthToken('', portal);
+            setPortalUser(null, portal);
             setCollections(emptyCollections);
             setActiveTab('dashboard');
         }
@@ -266,15 +303,50 @@ export const AppProvider = ({ children }) => {
         runAction(() => api.post(`/api/supply-requests/${requestId}/release`, { releasedTo }));
 
     const saveInventoryItem = (itemData) =>
-        runAction(() => (
-            itemData.id
-                ? api.put(`/api/inventory-items/${itemData.id}`, itemData)
-                : api.post('/api/inventory-items', itemData)
-        ));
+        runAction(() => {
+            const { imageFile, removeImage, imageUrl: _imageUrl, ...payload } = itemData;
+            const shouldUpload = imageFile instanceof File || removeImage === true;
 
-    const startStockCount = (title, location) =>
+            if (shouldUpload) {
+                const form = new FormData();
+                Object.entries(payload).forEach(([key, value]) => {
+                    if (value === undefined) {
+                        return;
+                    }
+                    form.append(key, value === null ? '' : String(value));
+                });
+                if (imageFile instanceof File) {
+                    form.append('image', imageFile);
+                }
+                if (removeImage === true) {
+                    form.append('removeImage', '1');
+                }
+                if (itemData.id) {
+                    return api.post(`/api/inventory-items/${itemData.id}`, form);
+                }
+                return api.post('/api/inventory-items', form);
+            }
+
+            return itemData.id
+                ? api.put(`/api/inventory-items/${itemData.id}`, payload)
+                : api.post('/api/inventory-items', payload);
+        });
+
+    const createStorageLocation = (locationData) =>
+        runAction(() => api.post('/api/storage-locations', locationData));
+
+    const bootstrapWarehouseLayout = () =>
+        runAction(() => api.post('/api/storage-locations/bootstrap'));
+
+    const moveInventoryItem = (itemId, storageLocationId = null) =>
+        runAction(() => api.post(`/api/inventory-items/${itemId}/move`, { storageLocationId }));
+
+    const adjustInventoryItem = (itemId, payload) =>
+        runAction(() => api.post(`/api/inventory-items/${itemId}/adjust`, payload));
+
+    const startStockCount = (title, locationName) =>
         runAction(async () => {
-            const count = await api.post('/api/stock-counts', { title, location });
+            const count = await api.post('/api/stock-counts', { title, location: locationName });
             setModalData(count);
             setActiveModal('stock_count');
             return count;
@@ -284,16 +356,60 @@ export const AppProvider = ({ children }) => {
         runAction(() => api.post(`/api/stock-counts/${countId}/submit`, { items: updatedItems }));
 
     const submitSupplierQuotation = (newQuote) =>
-        runAction(() => api.post('/api/quotations', newQuote));
+        runAction(() => {
+            const { warrantyFile, ...payload } = newQuote;
+            if (warrantyFile instanceof File) {
+                const form = new FormData();
+                Object.entries(payload).forEach(([key, value]) => {
+                    if (value === undefined || value === null) {
+                        return;
+                    }
+                    form.append(key, String(value));
+                });
+                form.append('warrantyFile', warrantyFile);
+                return api.post('/api/quotations', form);
+            }
+            return api.post('/api/quotations', payload);
+        });
 
     const updateSupplierQuotation = (quoteId, quoteData) =>
-        runAction(() => api.put(`/api/quotations/${quoteId}`, quoteData));
+        runAction(() => {
+            const { warrantyFile, ...payload } = quoteData;
+            if (warrantyFile instanceof File) {
+                const form = new FormData();
+                Object.entries(payload).forEach(([key, value]) => {
+                    if (value === undefined || value === null) {
+                        return;
+                    }
+                    form.append(key, String(value));
+                });
+                form.append('warrantyFile', warrantyFile);
+                return api.post(`/api/quotations/${quoteId}`, form);
+            }
+            return api.put(`/api/quotations/${quoteId}`, payload);
+        });
 
     const addDocument = (doc) =>
-        runAction(() => api.post('/api/documents', doc));
+        runAction(() => {
+            const { file, ...payload } = doc;
+            const form = new FormData();
+            Object.entries(payload).forEach(([key, value]) => {
+                if (value === undefined || value === null || value === '') {
+                    return;
+                }
+                form.append(key, String(value));
+            });
+            if (file instanceof File) {
+                form.append('file', file);
+            }
+            return api.post('/api/documents', form);
+        });
 
     const createManualProcurementRequest = (itemCode, quantity, reason, priority) =>
         runAction(() => api.post('/api/procurement-requests', { itemCode, quantity, reason, priority }));
+
+    const updateProcurementRequest = (prId, data) =>
+        runAction(() => api.put(`/api/procurement-requests/${prId}`, data));
 
     const sendProcurementToVendors = (procurementId) =>
         runAction(() => api.post(`/api/procurement-requests/${procurementId}/send-to-vendors`));
@@ -329,6 +445,10 @@ export const AppProvider = ({ children }) => {
             processDeliveryInspection,
             releaseSupplyRequest,
             saveInventoryItem,
+            createStorageLocation,
+            bootstrapWarehouseLayout,
+            moveInventoryItem,
+            adjustInventoryItem,
             startStockCount,
             submitPhysicalCount,
             submitSupplierQuotation,
@@ -337,6 +457,7 @@ export const AppProvider = ({ children }) => {
             markNotificationRead,
             markAllNotificationsRead,
             createManualProcurementRequest,
+            updateProcurementRequest,
             sendProcurementToVendors,
         }}>
             {children}

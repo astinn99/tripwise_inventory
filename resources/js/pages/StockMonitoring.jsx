@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { Activity, AlertTriangle, XCircle, CheckCircle2, ShoppingCart } from 'lucide-react';
-import { Modal } from '../components/ui/Modal';
+import { ItemIdentity } from '../components/ui/ItemThumb';
 
 export const StockMonitoring = () => {
   const {
@@ -9,16 +9,9 @@ export const StockMonitoring = () => {
     movements,
     setActiveTab,
     searchQuery,
-    createManualProcurementRequest,
-    activeModal,
     setActiveModal,
-    modalData,
     setModalData
   } = useApp();
-
-  const [restockQty, setRestockQty] = React.useState('');
-  const [restockReason, setRestockReason] = React.useState('');
-  const [restockPriority, setRestockPriority] = React.useState('NORMAL');
 
   const normalItems = inventory.filter(i => i.status === 'NORMAL');
   const lowStockItems = inventory.filter(i => i.status === 'LOW STOCK');
@@ -29,6 +22,11 @@ export const StockMonitoring = () => {
     item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
     item.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const openRestock = (item) => {
+    setModalData(item);
+    setActiveModal('manual_restock');
+  };
 
   return (
     <div className="stock-monitoring-page">
@@ -113,12 +111,20 @@ export const StockMonitoring = () => {
                 return (
                   <tr key={item.id}>
                     <td className="font-mono text-xs text-blue font-bold">{item.itemCode}</td>
-                    <td className="font-bold text-xs text-black">{item.description}</td>
+                    <td>
+                      <ItemIdentity
+                        src={item.imageUrl}
+                        name={item.description}
+                      />
+                    </td>
                     <td className="text-xs text-black font-semibold">{item.category}</td>
                     <td className="text-center font-extrabold text-lg">
                       <span className={item.status === 'OUT OF STOCK' ? 'text-danger' : item.status === 'LOW STOCK' ? 'text-warning' : 'text-success'}>
                         {item.quantity} {item.unit}
                       </span>
+                      {Number(item.damagedQuantity || 0) > 0 && (
+                        <div className="text-xs text-danger font-bold">{item.damagedQuantity} quarantined</div>
+                      )}
                     </td>
                     <td className="text-center font-bold text-warning text-sm">{item.minStockLevel}</td>
                     <td>
@@ -132,22 +138,13 @@ export const StockMonitoring = () => {
                     </td>
                     <td className="text-xs text-black font-semibold">{item.supplier}</td>
                     <td className="text-right">
-                      {item.status !== 'NORMAL' ? (
-                        <button
-                          onClick={() => {
-                            setModalData(item);
-                            setRestockQty(Math.max(0, item.minStockLevel - item.quantity) || 10);
-                            setRestockReason('');
-                            setRestockPriority(item.status === 'OUT OF STOCK' ? 'URGENT' : 'HIGH');
-                            setActiveModal('manual_restock');
-                          }}
-                          className="btn btn-warning btn-sm"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5" /> Manual Restock
-                        </button>
-                      ) : (
-                        <span className="text-xs text-black font-semibold">Normal</span>
-                      )}
+                      <button
+                        onClick={() => openRestock(item)}
+                        className={`btn btn-sm ${item.status === 'NORMAL' ? 'btn-outline' : 'btn-warning'}`}
+                        title={item.status === 'NORMAL' ? 'Create a proactive restock request' : 'Create a restock procurement request'}
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5" /> Manual Restock
+                      </button>
                     </td>
                   </tr>
                 );
@@ -156,62 +153,6 @@ export const StockMonitoring = () => {
           </table>
         </div>
       </div>
-
-      {activeModal === 'manual_restock' && modalData && (
-        <Modal
-          onClose={() => setActiveModal(null)}
-          icon={ShoppingCart}
-          tone="rose"
-          size="sm"
-          title="Manual Restock Request"
-          subtitle="Create a procurement request for a low or missing SKU."
-          footer={(
-            <>
-              <button onClick={() => setActiveModal(null)} className="btn btn-outline btn-sm">Cancel</button>
-              <button
-                onClick={() => {
-                  createManualProcurementRequest(modalData.itemCode, restockQty, restockReason, restockPriority);
-                  setActiveModal(null);
-                }}
-                className="btn btn-primary btn-sm"
-              >
-                Submit Request
-              </button>
-            </>
-          )}
-        >
-          <div className="modal-hero">
-            <div className="modal-hero-main">
-              <div className="modal-kicker">{modalData.itemCode}</div>
-              <h4>{modalData.description}</h4>
-              <div className="modal-hero-meta">Manual procurement will be queued for sourcing.</div>
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Quantity requested</label>
-            <input type="number" className="form-control" value={restockQty} onChange={e => setRestockQty(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Priority</label>
-            <select className="form-select" value={restockPriority} onChange={e => setRestockPriority(e.target.value)}>
-              <option value="NORMAL">NORMAL</option>
-              <option value="HIGH">HIGH</option>
-              <option value="URGENT">URGENT</option>
-            </select>
-          </div>
-          <div className="form-group mb-0">
-            <label className="form-label">Reason / justification</label>
-            <textarea
-              className="form-control"
-              rows="3"
-              value={restockReason}
-              onChange={e => setRestockReason(e.target.value)}
-              placeholder="E.g., Stock level critically low, buffer needed for upcoming maintenance."
-            />
-          </div>
-        </Modal>
-      )}
     </div>
   );
 };

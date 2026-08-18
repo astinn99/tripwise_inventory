@@ -19,10 +19,12 @@ export const Reports = () => {
 
   // Reports Summaries
   const invSummary = {
-    totalValue: inventory.reduce((sum, i) => sum + (i.cost * i.quantity), 0),
+    totalValue: inventory.reduce((sum, i) => sum + (i.cost * (i.quantity + Number(i.damagedQuantity || 0))), 0),
     totalItems: inventory.length,
     lowStockCount: inventory.filter(i => i.status === 'LOW STOCK').length,
-    damagedCount: movements.filter(m => m.movementType === 'Damaged').length
+    damagedCount: movements.filter(m => m.movementType === 'Damaged').length,
+    disposedCount: movements.filter(m => ['Disposed', 'Lost', 'Return'].includes(m.movementType)).length,
+    quarantinedUnits: inventory.reduce((sum, i) => sum + Number(i.damagedQuantity || 0), 0),
   };
 
   const psmSummary = {
@@ -105,7 +107,7 @@ export const Reports = () => {
             <div className="kpi-card border-rose-500/40">
               <div className="kpi-header"><span className="kpi-title">DAMAGED ITEMS LOGGED</span></div>
               <div className="kpi-value text-rose-400">{invSummary.damagedCount}</div>
-              <div className="kpi-footer font-mono">Isolated for disposal</div>
+              <div className="kpi-footer font-mono">{invSummary.quarantinedUnits} units isolated · {invSummary.disposedCount} written off</div>
             </div>
           </div>
 
@@ -120,7 +122,8 @@ export const Reports = () => {
                     <th>Item Code</th>
                     <th>Item Name</th>
                     <th>Category</th>
-                    <th className="text-center">Stock Qty</th>
+                    <th className="text-center">Available</th>
+                    <th className="text-center">Quarantine</th>
                     <th className="text-right">Unit Cost</th>
                     <th className="text-right">Total Valuation</th>
                     <th>Status</th>
@@ -133,9 +136,10 @@ export const Reports = () => {
                       <td className="font-bold text-xs text-white">{i.description}</td>
                       <td className="text-xs text-slate-300">{i.category}</td>
                       <td className="text-center font-bold">{i.quantity} {i.unit}</td>
+                      <td className="text-center font-bold text-rose-400">{i.damagedQuantity || 0}</td>
                       <td className="text-right font-mono text-xs text-slate-300">₱{Number(i.cost).toLocaleString()}</td>
                       <td className="text-right font-mono text-xs text-emerald-400 font-bold">
-                        ₱{(i.cost * i.quantity).toLocaleString()}
+                        ₱{(i.cost * (i.quantity + Number(i.damagedQuantity || 0))).toLocaleString()}
                       </td>
                       <td><span className={`badge badge-${i.status.toLowerCase().replace(/ /g, '-')}`}>{i.status}</span></td>
                     </tr>

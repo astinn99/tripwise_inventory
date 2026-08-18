@@ -1,9 +1,9 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Send, CheckCircle2, PackageCheck } from 'lucide-react';
+import { Send, CheckCircle2 } from 'lucide-react';
 
 export const Releases = () => {
-  const { releases, supplyRequests, releaseSupplyRequest, searchQuery } = useApp();
+  const { releases, supplyRequests, releaseSupplyRequest, searchQuery, setActiveModal, setModalData } = useApp();
 
   const pendingReleases = supplyRequests.filter(r => r.status === 'Ready for Release');
 
@@ -22,9 +22,19 @@ export const Releases = () => {
           <span className="subsystem-badge">SMART WAREHOUSING SYSTEM (SWS)</span>
           <div>
             <h2 className="subsystem-heading">Stock Release & Dispatch Management</h2>
-            <p className="subsystem-subtext">Handles physical item release for approved department supply requests and records inventory deduction.</p>
+            <p className="subsystem-subtext">Handles physical item release for approved department supply requests, walk-in manual issues, and records inventory deduction.</p>
           </div>
         </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => {
+            setModalData({ type: 'ManualRelease' });
+            setActiveModal('adjust_stock');
+          }}
+        >
+          <Send className="w-3.5 h-3.5" /> Manual Release
+        </button>
       </div>
 
       {/* Ready for Release Dispatch Queue */}
@@ -107,7 +117,10 @@ export const Releases = () => {
               {filteredHistory.map(rel => (
                 <tr key={rel.id}>
                   <td className="font-mono text-xs text-purple-400 font-bold">{rel.id}</td>
-                  <td className="font-mono text-xs text-blue-400">{rel.requestId}</td>
+                  <td className="font-mono text-xs text-blue-400">
+                    {rel.requestId}
+                    {rel.requestId === 'MANUAL' && <div className="text-xs text-slate-400">Walk-in issue</div>}
+                  </td>
                   <td className="font-bold text-xs text-white">{rel.requestingDepartment}</td>
                   <td className="text-xs text-slate-200">{rel.itemName} ({rel.itemCode})</td>
                   <td className="text-center font-bold text-purple-400">-{rel.quantityReleased}</td>

@@ -18,6 +18,7 @@ class OpportunityResource extends JsonResource
             'title' => $this->title,
             'itemName' => $pr?->item_name ?? $this->title,
             'itemCode' => $pr?->item_code ?? '',
+            'imageUrl' => $pr?->catalogItem?->imageUrl(),
             'category' => $this->category,
             'quantity' => $this->quantity,
             'priority' => $pr?->priority,

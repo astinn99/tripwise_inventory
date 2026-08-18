@@ -26,6 +26,13 @@ class PurchaseOrderController extends Controller
 
     public function financeDecision(FinanceDecisionRequest $request, PurchaseOrder $purchaseOrder, SupplyChainService $service)
     {
+        $isPending = $purchaseOrder->finance_approval_status === 'Pending Finance Approval'
+            || $purchaseOrder->po_status === 'Pending Finance Approval';
+
+        if (! $isPending) {
+            return $this->fail('This purchase order has already been decided by Finance.', 422);
+        }
+
         $po = $service->updateFinanceApproval(
             $purchaseOrder->load('timeline', 'procurementRequest'),
             $request->validated('status'),

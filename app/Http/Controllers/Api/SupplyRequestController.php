@@ -13,7 +13,7 @@ class SupplyRequestController extends Controller
 {
     public function index()
     {
-        $requests = SupplyRequest::query()->with('logs')->orderByDesc('id')->get();
+        $requests = SupplyRequest::query()->with(['logs', 'catalogItem', 'inventoryItem'])->orderByDesc('id')->get();
 
         return $this->ok(SupplyRequestResource::collection($requests));
     }

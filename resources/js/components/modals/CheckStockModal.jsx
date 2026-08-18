@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { PackageCheck, AlertTriangle, CheckCircle2, ShoppingBag, MapPin } from 'lucide-react';
 import { Modal, displayValue } from '../ui/Modal';
+import { ItemThumb, itemImageUrl } from '../ui/ItemThumb';
 
 export const CheckStockModal = () => {
   const { activeModal, setActiveModal, modalData, inventory, processSupplyRequestStock } = useApp();
@@ -43,6 +44,7 @@ export const CheckStockModal = () => {
       )}
     >
       <div className="modal-hero">
+        <ItemThumb src={itemImageUrl(req, inventory)} alt={req.itemName} size="md" />
         <div className="modal-hero-main">
           <div className="modal-kicker">{req.requestingDepartment}</div>
           <h4>{req.itemName}</h4>

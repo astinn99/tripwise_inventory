@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\AdjustInventoryItemRequest;
 use App\Http\Requests\InventoryItemRequest;
+use App\Http\Requests\MoveInventoryItemRequest;
 use App\Http\Resources\InventoryItemResource;
 use App\Models\InventoryItem;
 use App\Services\SupplyChainService;
@@ -34,5 +36,33 @@ class InventoryItemController extends Controller
         $item = $service->saveInventoryItem($request->validated(), $inventoryItem);
 
         return $this->ok(new InventoryItemResource($item), 'Inventory item updated');
+    }
+
+    public function move(MoveInventoryItemRequest $request, InventoryItem $inventoryItem, SupplyChainService $service)
+    {
+        $item = $service->moveInventoryItem(
+            $inventoryItem,
+            $request->validated('storageLocationId'),
+            $request->user()
+        );
+
+        return $this->ok(new InventoryItemResource($item), 'Item moved');
+    }
+
+    public function adjust(AdjustInventoryItemRequest $request, InventoryItem $inventoryItem, SupplyChainService $service)
+    {
+        $data = $request->validated();
+        $data['source'] = $request->resolvedSource($inventoryItem);
+        $item = $service->adjustInventory($inventoryItem, $data, $request->user());
+
+        $messages = [
+            'Damaged' => 'Units moved to quarantine',
+            'Disposed' => 'Units disposed',
+            'Return' => 'Units returned to vendor',
+            'Lost' => 'Units recorded as lost',
+            'ManualRelease' => 'Stock released',
+        ];
+
+        return $this->ok(new InventoryItemResource($item), $messages[$data['type']] ?? 'Inventory adjusted');
     }
 }

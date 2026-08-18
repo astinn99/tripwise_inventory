@@ -11,7 +11,7 @@ class OpportunityController extends Controller
 {
     public function index(Request $request)
     {
-        $query = SupplierOpportunity::query()->with('procurementRequest')->orderByDesc('id');
+        $query = SupplierOpportunity::query()->with('procurementRequest.catalogItem')->orderByDesc('id');
 
         if ($request->user()->isSupplier()) {
             $supplierId = $request->user()->supplier_id;

@@ -1,26 +1,22 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
 import { useApp } from './context/AppContext';
 import { VendorSidebar } from './components/layout/VendorSidebar';
 import { VendorHeader } from './components/layout/VendorHeader';
+import { BrandLogo } from './components/layout/BrandLogo';
 import { VendorPortal } from './pages/VendorPortal';
 import { Login } from './pages/Login';
 
 export function VendorApp() {
   const { user, bootLoading, bootError, actionError } = useApp();
-  const navigate = useNavigate();
   const [vendorTab, setVendorTab] = useState('dashboard');
-
-  useEffect(() => {
-    if (!bootLoading && user && user.role !== 'supplier') {
-      navigate('/', { replace: true });
-    }
-  }, [user, bootLoading, navigate]);
 
   if (bootLoading) {
     return (
       <div className="login-screen">
         <div className="login-card">
+          <div className="login-brand">
+            <BrandLogo variant="login" subtitle="Vendor Portal" />
+          </div>
           <p className="text-sm font-bold">Loading Vendor Portal...</p>
         </div>
       </div>
@@ -29,20 +25,19 @@ export function VendorApp() {
 
   if (bootError) {
     return (
-      <div className="app-shell" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div className="panel-card p-6">
+      <div className="login-screen">
+        <div className="login-card">
+          <div className="login-brand">
+            <BrandLogo variant="login" subtitle="Vendor Portal" />
+          </div>
           <p className="text-sm font-bold">{bootError}</p>
         </div>
       </div>
     );
   }
 
-  if (!user) {
+  if (!user || user.role !== 'supplier') {
     return <Login portal="vendor" />;
-  }
-
-  if (user.role !== 'supplier') {
-    return null;
   }
 
   return (
@@ -50,7 +45,7 @@ export function VendorApp() {
       <VendorSidebar activeTab={vendorTab} setActiveTab={setVendorTab} />
 
       <div className="main-wrapper">
-        <VendorHeader />
+        <VendorHeader activeTab={vendorTab} />
 
         <main className="main-content">
           {actionError && (

@@ -15,12 +15,20 @@ class DocumentResource extends JsonResource
             'title' => $this->title,
             'type' => $this->type,
             'referenceNumber' => $this->reference_number,
-            'supplier' => $this->supplier,
+            'supplier' => $this->supplierAccount?->company_name ?? $this->supplier,
+            'supplierId' => $this->supplier_id,
             'issueDate' => optional($this->issue_date)?->format('Y-m-d'),
             'expirationDate' => optional($this->expiration_date)?->format('Y-m-d'),
             'status' => $this->resolveStatus(),
+            'daysRemaining' => $this->daysRemaining(),
             'category' => $this->category,
             'fileSize' => $this->file_size,
+            'fileUrl' => $this->fileUrl(),
+            'originalFilename' => $this->original_filename,
+            'source' => $this->source,
+            'warrantyMonths' => $this->warranty_months,
+            'itemCode' => $this->inventoryItem?->item_code,
+            'purchaseOrderNumber' => $this->purchaseOrder?->po_number,
         ];
     }
 }

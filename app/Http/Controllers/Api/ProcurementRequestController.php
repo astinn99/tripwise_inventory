@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ManualProcurementRequest;
+use App\Http\Requests\UpdateProcurementRequest;
 use App\Http\Resources\ProcurementRequestResource;
 use App\Models\InventoryItem;
 use App\Models\ProcurementRequest;
@@ -14,7 +15,7 @@ class ProcurementRequestController extends Controller
     public function index()
     {
         return $this->ok(ProcurementRequestResource::collection(
-            ProcurementRequest::query()->withCount('opportunities')->orderByDesc('id')->get()
+            ProcurementRequest::query()->with('catalogItem')->withCount('opportunities')->orderByDesc('id')->get()
         ));
     }
 
@@ -29,6 +30,13 @@ class ProcurementRequestController extends Controller
         );
 
         return $this->created(new ProcurementRequestResource($pr->loadCount('opportunities')), 'Procurement request created');
+    }
+
+    public function update(UpdateProcurementRequest $request, ProcurementRequest $procurementRequest, SupplyChainService $service)
+    {
+        $pr = $service->updateProcurementRequest($procurementRequest, $request->validated());
+
+        return $this->ok(new ProcurementRequestResource($pr), 'Procurement request updated');
     }
 
     public function sendToVendors(ProcurementRequest $procurementRequest, SupplyChainService $service)

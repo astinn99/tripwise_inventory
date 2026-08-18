@@ -29,6 +29,11 @@ class ProcurementRequest extends Model
         ];
     }
 
+    public function catalogItem(): BelongsTo
+    {
+        return $this->belongsTo(InventoryItem::class, 'item_code', 'item_code');
+    }
+
     public function supplyRequest(): BelongsTo
     {
         return $this->belongsTo(SupplyRequest::class);

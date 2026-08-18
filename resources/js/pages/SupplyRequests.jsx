@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ClipboardList, PackageCheck, Send, Filter } from 'lucide-react';
+import { ItemIdentity, itemImageUrl } from '../components/ui/ItemThumb';
+
+const normalizeSupplyStatus = (status) => {
+  const value = String(status || '').trim();
+  if (!value || value === 'Received') {
+    return 'Pending';
+  }
+  return value;
+};
 
 export const SupplyRequests = () => {
   const {
@@ -12,18 +21,28 @@ export const SupplyRequests = () => {
     searchQuery
   } = useApp();
 
-  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterStatus, setFilterStatus] = useState('Pending');
+  const [filterDepartment, setFilterDepartment] = useState('ALL');
 
-  // Filter & Search logic
+  const departments = [...new Set(supplyRequests.map(req => req.requestingDepartment).filter(Boolean))].sort();
+
   const filteredRequests = supplyRequests.filter(req => {
-    const matchesSearch =
-      req.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.requestingDepartment.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.itemCode.toLowerCase().includes(searchQuery.toLowerCase());
+    const requestId = (req.id || '').toLowerCase();
+    const department = (req.requestingDepartment || '').toLowerCase();
+    const itemName = (req.itemName || '').toLowerCase();
+    const itemCode = (req.itemCode || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    const status = normalizeSupplyStatus(req.status);
 
-    const matchesStatus = filterStatus === 'ALL' || req.status === filterStatus;
-    return matchesSearch && matchesStatus;
+    const matchesSearch =
+      requestId.includes(query) ||
+      department.includes(query) ||
+      itemName.includes(query) ||
+      itemCode.includes(query);
+
+    const matchesStatus = filterStatus === 'ALL' || status === filterStatus;
+    const matchesDepartment = filterDepartment === 'ALL' || req.requestingDepartment === filterDepartment;
+    return matchesSearch && matchesStatus && matchesDepartment;
   });
 
   return (
@@ -43,7 +62,7 @@ export const SupplyRequests = () => {
           <Filter className="w-4 h-4 text-secondary" />
           <span className="text-xs text-secondary font-bold uppercase tracking-wider">Filter Status:</span>
           <div className="flex gap-1.5 flex-wrap">
-            {['ALL', 'Received', 'Stock Available', 'Insufficient Stock', 'For Procurement', 'Ready for Release', 'Released'].map(st => (
+            {['ALL', 'Pending', 'Ready for Release', 'For Procurement', 'Released'].map(st => (
               <button
                 key={st}
                 onClick={() => setFilterStatus(st)}
@@ -53,6 +72,17 @@ export const SupplyRequests = () => {
               </button>
             ))}
           </div>
+          <span className="text-xs text-secondary font-bold uppercase tracking-wider ml-2">Department:</span>
+          <select
+            className="btn btn-sm btn-outline"
+            value={filterDepartment}
+            onChange={(event) => setFilterDepartment(event.target.value)}
+          >
+            <option value="ALL">All departments</option>
+            {departments.map(department => (
+              <option key={department} value={department}>{department}</option>
+            ))}
+          </select>
         </div>
         <span className="text-xs text-secondary font-medium">Showing {filteredRequests.length} of {supplyRequests.length} requests</span>
       </div>
@@ -77,7 +107,7 @@ export const SupplyRequests = () => {
                 <th>Priority</th>
                 <th>Stock Availability</th>
                 <th>Status</th>
-                <th className="text-right">Actions</th>
+                <th className="table-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -85,59 +115,66 @@ export const SupplyRequests = () => {
                 const invItem = inventory.find(i => i.itemCode === req.itemCode);
                 const currentStock = invItem ? invItem.quantity : 0;
                 const minStock = invItem ? invItem.minStockLevel : 0;
+                const stockAvailability = req.stockAvailability || 'Pending';
+                const status = normalizeSupplyStatus(req.status);
+                const priority = req.priority || 'MEDIUM';
+                const canCheckStock = status === 'Pending';
+                const canRelease = status === 'Ready for Release';
 
                 return (
                   <tr key={req.id}>
                     <td className="font-mono text-xs text-blue font-bold">{req.id}</td>
                     <td className="font-bold text-xs text-primary">{req.requestingDepartment}</td>
                     <td>
-                      <div className="font-bold text-xs text-primary">{req.itemName}</div>
-                      <div className="font-mono text-xs text-secondary">
-                        {req.itemCode} (Stock: {currentStock} | Min: {minStock})
-                      </div>
+                      <ItemIdentity
+                        src={itemImageUrl(req, inventory)}
+                        name={req.itemName}
+                        code={req.itemCode}
+                        extra={`(Stock: ${currentStock} | Min: ${minStock})`}
+                      />
                     </td>
                     <td className="text-center font-bold text-xs">{req.quantityRequested}</td>
                     <td className="text-xs text-secondary">{req.requiredDate}</td>
                     <td>
-                      <span className={`badge ${req.priority === 'URGENT' ? 'badge-urgent' : req.priority === 'HIGH' ? 'badge-low-stock' : 'badge-info'}`}>
-                        {req.priority}
+                      <span className={`badge ${priority === 'URGENT' ? 'badge-urgent' : priority === 'HIGH' ? 'badge-low-stock' : 'badge-info'}`}>
+                        {priority}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge badge-${req.stockAvailability.toLowerCase().replace(/ /g, '-')}`}>
-                        {req.stockAvailability}
+                      <span className={`badge badge-${stockAvailability.toLowerCase().replace(/ /g, '-')}`}>
+                        {stockAvailability}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge badge-${req.status.toLowerCase().replace(/ /g, '-')}`}>
-                        {req.status}
+                      <span className={`badge badge-${status.toLowerCase().replace(/ /g, '-')}`}>
+                        {status}
                       </span>
                     </td>
-                    <td className="text-right">
-                      <div className="flex justify-end gap-1.5">
-                        {req.status === 'Received' && (
-                          <button
-                            onClick={() => {
-                              setModalData(req);
-                              setActiveModal('check_stock');
-                            }}
-                            className="btn btn-primary btn-sm"
-                            title="Verify Stock Availability vs Min Stock"
-                          >
-                            <PackageCheck className="w-3.5 h-3.5" /> Check Stock
-                          </button>
-                        )}
+                    <td className="table-actions">
+                      {canCheckStock && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalData(req);
+                            setActiveModal('check_stock');
+                          }}
+                          className="btn btn-primary btn-sm"
+                          title="Verify Stock Availability vs Min Stock"
+                        >
+                          <PackageCheck className="w-3.5 h-3.5" /> Check Stock
+                        </button>
+                      )}
 
-                        {req.status === 'Ready for Release' && (
-                          <button
-                            onClick={() => releaseSupplyRequest(req.id, req.requestedBy)}
-                            className="btn btn-success btn-sm"
-                            title="Dispatch Stock & Update Inventory"
-                          >
-                            <Send className="w-3.5 h-3.5" /> Release Item
-                          </button>
-                        )}
-                      </div>
+                      {canRelease && (
+                        <button
+                          type="button"
+                          onClick={() => releaseSupplyRequest(req.id, req.requestedBy)}
+                          className="btn btn-success btn-sm"
+                          title="Dispatch Stock & Update Inventory"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Release Item
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

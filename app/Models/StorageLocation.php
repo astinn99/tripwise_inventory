@@ -16,6 +16,6 @@ class StorageLocation extends Model
 
     public function label(): string
     {
-        return "{$this->rack} -> {$this->shelf} -> {$this->bin}";
+        return "{$this->rack} → {$this->shelf} → {$this->bin}";
     }
 }

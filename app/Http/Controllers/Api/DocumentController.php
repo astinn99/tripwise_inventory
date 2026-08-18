@@ -6,33 +6,37 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\DocumentStoreRequest;
 use App\Http\Resources\DocumentResource;
 use App\Models\Document;
-use App\Services\NotificationService;
-use App\Support\DocumentCode;
+use App\Services\SupplyChainService;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class DocumentController extends Controller
 {
     public function index()
     {
-        return $this->ok(DocumentResource::collection(Document::query()->orderByDesc('id')->get()));
+        $documents = Document::query()
+            ->with(['inventoryItem', 'purchaseOrder', 'supplierAccount'])
+            ->orderByDesc('id')
+            ->get();
+
+        return $this->ok(DocumentResource::collection($documents));
     }
 
-    public function store(DocumentStoreRequest $request, NotificationService $notifications)
+    public function store(DocumentStoreRequest $request, SupplyChainService $service)
     {
-        $doc = Document::query()->create([
-            'document_number' => DocumentCode::next('documents', 'document_number', 'DOC'),
-            'title' => $request->validated('title'),
-            'type' => $request->validated('type'),
-            'reference_number' => $request->validated('referenceNumber'),
-            'supplier' => $request->validated('supplier'),
-            'issue_date' => $request->validated('issueDate') ?: now()->toDateString(),
-            'expiration_date' => $request->validated('expirationDate'),
-            'status' => $request->validated('status') ?: 'Active',
-            'category' => $request->validated('category'),
-            'file_size' => $request->validated('fileSize') ?: '1.5 MB',
-        ]);
-
-        $notifications->create('Document Archived', "Document \"{$doc->title}\" uploaded into DTRS.", 'document', 'info');
+        $doc = $service->archiveDocument($request->validated(), $request->file('file'));
 
         return $this->created(new DocumentResource($doc), 'Document archived');
+    }
+
+    public function download(Document $document): StreamedResponse
+    {
+        if (! $document->file_path || ! Storage::disk('public')->exists($document->file_path)) {
+            abort(404, 'File not found.');
+        }
+
+        $name = $document->original_filename ?: basename($document->file_path);
+
+        return Storage::disk('public')->download($document->file_path, $name);
     }
 }

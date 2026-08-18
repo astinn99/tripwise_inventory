@@ -26,7 +26,7 @@ export const InventoryMovements = () => {
           <Filter className="w-4 h-4 text-slate-400" />
           <span className="text-xs text-slate-400 font-bold uppercase">Movement Type:</span>
           <div className="flex gap-1 flex-wrap">
-            {['ALL', 'Receiving', 'Releasing', 'Transfer', 'Return', 'Damaged', 'Lost', 'Disposed'].map(type => (
+            {['ALL', 'Receiving', 'Releasing', 'Transfer', 'Return', 'Damaged', 'Lost', 'Disposed', 'Adjustment'].map(type => (
               <button
                 key={type}
                 onClick={() => setTypeFilter(type)}
@@ -77,7 +77,8 @@ export const InventoryMovements = () => {
                   <td>
                     <span className={`badge badge-${m.movementType === 'Receiving' ? 'normal' :
                         m.movementType === 'Releasing' ? 'purple' :
-                          m.movementType === 'Damaged' ? 'damaged' : 'info'
+                          ['Damaged', 'Disposed', 'Lost', 'Return'].includes(m.movementType) ? 'damaged' :
+                            m.movementType === 'Adjustment' ? 'adjustment' : 'info'
                       }`}>
                       {m.movementType}
                     </span>
