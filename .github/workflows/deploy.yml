@@ -19,7 +19,7 @@ jobs:
           script: |
             set -e
 
-            APP_PATH="/var/www/tripwise_inventory"
+            APP_PATH="/var/www/inventory"
             mkdir -p "$APP_PATH"
             cd "$APP_PATH"
 
