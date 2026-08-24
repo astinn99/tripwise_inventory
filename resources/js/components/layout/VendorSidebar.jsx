@@ -34,7 +34,7 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
 
   const badges = {
     opportunities: opportunities.length,
-    my_quotes: quotations.length,
+    my_quotes: quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-')).length,
     purchase_orders: purchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier').length,
   };
 

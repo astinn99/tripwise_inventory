@@ -197,8 +197,8 @@ export const Reports = () => {
                       <td className="font-mono text-xs text-purple-400">{po.budgetReference}</td>
                       <td className="text-xs text-slate-300">{po.procurementReason}</td>
                       <td className="text-right font-mono text-xs text-emerald-400 font-bold">₱{Number(po.totalCost).toLocaleString()}</td>
-                      <td><span className={`badge badge-${po.financeApprovalStatus.toLowerCase().replace(/ /g, '-')}`}>{po.financeApprovalStatus}</span></td>
-                      <td><span className={`badge badge-${po.poStatus.toLowerCase().replace(/ /g, '-')}`}>{po.poStatus}</span></td>
+                      <td><span className={`badge badge-${String(po.financeApprovalStatus || '').toLowerCase().replace(/ /g, '-')}`}>{po.financeApprovalStatus}</span></td>
+                      <td><span className={`badge badge-${String(po.poStatus || '').toLowerCase().replace(/ /g, '-')}`}>{po.poStatus}</span></td>
                     </tr>
                   ))}
                 </tbody>

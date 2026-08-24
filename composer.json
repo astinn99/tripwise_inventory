@@ -44,7 +44,7 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
-            "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74,#34d399\" \"php artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"php artisan pail --timeout=0\" \"php artisan reverb:start\" \"npm run dev\" --names=server,queue,logs,reverb,vite --kill-others"
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74,#34d399\" \"php -d sys_temp_dir=storage/app/php-tmp -d upload_tmp_dir=storage/app/php-tmp -d upload_max_filesize=40M -d post_max_size=40M artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"php artisan pail --timeout=0\" \"php artisan reverb:start\" \"npm run dev\" --names=server,queue,logs,reverb,vite --kill-others"
         ],
         "test": [
             "@php artisan config:clear --ansi @no_additional_args",

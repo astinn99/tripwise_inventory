@@ -89,6 +89,19 @@ export const CompareQuotationsModal = () => {
                   </div>
                   <p className="text-xs mb-3">₱{Number(quote.unitPrice).toLocaleString()} / unit</p>
 
+                  <div className="modal-quote-photos mb-3">
+                    <span className="modal-quote-photos-label">Vendor item photos</span>
+                    {quote.itemPhotoUrls?.length ? (
+                      <div className="quote-photo-strip">
+                        {quote.itemPhotoUrls.map((url) => (
+                          <ItemThumb key={url} src={url} alt={`${quote.supplierName} — ${quote.item}`} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="quote-photo-empty">No photos submitted</span>
+                    )}
+                  </div>
+
                   <div className="modal-dl">
                     <div className="modal-dl-row">
                       <span><Truck className="w-3.5 h-3.5" /> Delivery</span>

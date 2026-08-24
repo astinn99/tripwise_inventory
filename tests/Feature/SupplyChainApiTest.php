@@ -2,16 +2,22 @@
 
 namespace Tests\Feature;
 
+use App\Models\AppNotification;
+use App\Models\Document;
 use App\Models\InventoryItem;
 use App\Models\ProcurementRequest;
 use App\Models\PurchaseOrder;
+use App\Models\Quotation;
 use App\Models\StorageLocation;
 use App\Models\Supplier;
 use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
+use App\Services\NotificationService;
+use App\Support\DocumentCode;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -76,6 +82,51 @@ class SupplyChainApiTest extends TestCase
             ]);
     }
 
+    public function test_bootstrap_core_does_not_n_plus_one_documents_and_purchase_orders(): void
+    {
+        $user = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-BOOT',
+            'company_name' => 'Bootstrap Supplier',
+            'contact_person' => 'Pat Lee',
+            'status' => 'Active',
+            'categories' => ['Office Supplies'],
+        ]);
+
+        foreach (range(1, 8) as $i) {
+            Document::query()->create([
+                'document_number' => 'DOC-BOOT-'.$i,
+                'title' => 'Policy '.$i,
+                'type' => 'Insurance',
+                'expiration_date' => now()->addDays(40)->toDateString(),
+                'status' => 'Active',
+                'supplier_id' => $supplier->id,
+            ]);
+            PurchaseOrder::query()->create([
+                'po_number' => 'PO-BOOT-'.$i,
+                'supplier_id' => $supplier->id,
+                'supplier' => 'Bootstrap Supplier',
+                'total_cost' => 1000,
+                'finance_approval_status' => 'Pending Finance Approval',
+                'po_status' => 'Pending Finance Approval',
+                'created_date' => now()->toDateString(),
+            ]);
+        }
+
+        DB::enableQueryLog();
+
+        $this->actingAs($user)
+            ->getJson('/api/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertLessThan(
+            40,
+            count(DB::getQueryLog()),
+            'Bootstrap core should not lazy-load document or purchase order relations.'
+        );
+    }
+
     public function test_bootstrap_more_returns_deferred_collections(): void
     {
         $user = User::factory()->create();
@@ -120,6 +171,12 @@ class SupplyChainApiTest extends TestCase
                     'stamps',
                     'quotations',
                     'notifications',
+                    'procurementRequests',
+                    'inventory',
+                    'deliveries',
+                    'movements',
+                    'supplyRequests',
+                    'releases',
                 ],
             ]);
     }
@@ -154,6 +211,60 @@ class SupplyChainApiTest extends TestCase
             ->postJson("/api/supply-requests/{$request->request_number}/check-stock")
             ->assertOk()
             ->assertJsonPath('data.status', 'Ready for Release');
+    }
+
+    public function test_release_deducts_stock_once_and_is_idempotent(): void
+    {
+        $user = User::factory()->create(['name' => 'J. Perez']);
+        $item = InventoryItem::query()->create([
+            'code' => 'INV-205',
+            'item_code' => 'COM-205',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 20,
+            'min_stock_level' => 2,
+            'unit' => 'Units',
+            'cost' => 1000,
+        ]);
+        $request = SupplyRequest::query()->create([
+            'request_number' => 'REQ-2026-205',
+            'requesting_department' => 'Maintenance & Workshop',
+            'inventory_item_id' => $item->id,
+            'item_code' => $item->item_code,
+            'item_name' => $item->description,
+            'category' => $item->category,
+            'quantity_requested' => 5,
+            'priority' => 'MEDIUM',
+            'status' => 'Ready for Release',
+            'requested_by' => 'Engr. J. Perez',
+        ]);
+
+        $first = $this->actingAs($user)
+            ->postJson("/api/supply-requests/{$request->request_number}/release", [
+                'releasedTo' => 'Engr. J. Perez',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.requestId', 'REQ-2026-205')
+            ->assertJsonPath('data.updatedSupplyRequest.status', 'Released')
+            ->assertJsonPath('data.updatedInventory.0.quantity', 15)
+            ->assertJsonPath('data.createdMovements.0.movementType', 'Releasing')
+            ->assertJsonPath('data.createdMovements.0.quantity', 5);
+
+        $releaseId = $first->json('data.id');
+
+        $this->actingAs($user)
+            ->postJson("/api/supply-requests/{$request->request_number}/release", [
+                'releasedTo' => 'Engr. J. Perez',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.id', $releaseId)
+            ->assertJsonPath('data.updatedSupplyRequest.status', 'Released')
+            ->assertJsonPath('data.updatedInventory.0.quantity', 15);
+
+        $this->assertSame(15, $item->fresh()->quantity);
+        $this->assertSame('Released', $request->fresh()->status);
+        $this->assertDatabaseCount('releases', 1);
+        $this->assertDatabaseCount('inventory_movements', 1);
     }
 
     public function test_supply_request_index_handles_pending_manual_rows(): void
@@ -401,6 +512,100 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonPath('data.vendorInviteCount', 2);
     }
 
+    public function test_notification_numbers_skip_existing_sequential_and_hex_ids(): void
+    {
+        AppNotification::query()->create([
+            'notification_number' => 'NOTIF-027',
+            'title' => 'Existing sequential',
+            'message' => 'Already used',
+            'logged_at' => now()->format('Y-m-d H:i'),
+        ]);
+        AppNotification::query()->create([
+            'notification_number' => 'NOTIF-AABBCCDD',
+            'title' => 'Random hex',
+            'message' => 'Latest row by id',
+            'logged_at' => now()->format('Y-m-d H:i'),
+        ]);
+
+        $this->assertSame(
+            ['NOTIF-028', 'NOTIF-029'],
+            DocumentCode::nextMany('supply_notifications', 'notification_number', 'NOTIF', 2, 3, false)
+        );
+
+        app(NotificationService::class)->createMany([
+            [
+                'title' => 'New RFQ Available',
+                'message' => 'PR-2026-010: quote 10 units of toktok (COM-001).',
+                'type' => 'procurement',
+            ],
+        ]);
+
+        $this->assertDatabaseHas('supply_notifications', [
+            'notification_number' => 'NOTIF-028',
+            'title' => 'New RFQ Available',
+        ]);
+        $this->assertDatabaseMissing('supply_notifications', [
+            'notification_number' => 'NOTIF-027',
+            'title' => 'New RFQ Available',
+        ]);
+    }
+
+    public function test_send_to_vendors_succeeds_when_legacy_notification_numbers_exist(): void
+    {
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-270',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+        InventoryItem::query()->create([
+            'code' => 'INV-270',
+            'item_code' => 'COM-270',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 1,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        AppNotification::query()->create([
+            'notification_number' => 'NOTIF-027',
+            'title' => 'Legacy',
+            'message' => 'Taken',
+            'logged_at' => now()->format('Y-m-d H:i'),
+        ]);
+        AppNotification::query()->create([
+            'notification_number' => 'NOTIF-6A8B6C08',
+            'title' => 'Hex',
+            'message' => 'Latest',
+            'logged_at' => now()->format('Y-m-d H:i'),
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-270',
+                'quantity' => 10,
+                'reason' => 'Restock handheld radios',
+                'priority' => 'HIGH',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'Quotation')
+            ->assertJsonPath('data.vendorInviteCount', 1)
+            ->assertJsonPath('data.sentToVendors', true);
+    }
+
     public function test_manual_restock_is_allowed_when_stock_is_normal(): void
     {
         $staff = User::factory()->create();
@@ -481,6 +686,8 @@ class SupplyChainApiTest extends TestCase
 
     public function test_vendor_quote_leaves_opportunities_and_can_be_edited_until_selected(): void
     {
+        Storage::fake('public');
+
         $staff = User::factory()->create();
         $supplier = Supplier::query()->create([
             'code' => 'SUP-220',
@@ -520,7 +727,7 @@ class SupplyChainApiTest extends TestCase
             ->assertOk();
 
         $quoteNumber = $this->actingAs($vendor)
-            ->postJson('/api/quotations', [
+            ->post('/api/quotations', [
                 'procurementId' => $prNumber,
                 'item' => 'toktok',
                 'quantity' => 10,
@@ -528,9 +735,11 @@ class SupplyChainApiTest extends TestCase
                 'totalPrice' => 10000,
                 'warranty' => '1 year',
                 'deliveryTimeDays' => 2,
-            ])
+                'itemPhotos' => [UploadedFile::fake()->image('unit.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
             ->assertCreated()
             ->assertJsonPath('data.canEdit', true)
+            ->assertJsonCount(1, 'data.itemPhotoUrls')
             ->json('data.id');
 
         $this->actingAs($vendor)
@@ -547,7 +756,458 @@ class SupplyChainApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.unitPrice', 1200)
             ->assertJsonPath('data.totalPrice', 12000)
+            ->assertJsonPath('data.canEdit', true)
+            ->assertJsonCount(1, 'data.itemPhotoUrls');
+    }
+
+    public function test_vendor_can_submit_quotation_with_base64_warranty_file(): void
+    {
+        Storage::fake('public');
+
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-221',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Fleet Consumables'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+
+        InventoryItem::query()->create([
+            'code' => 'INV-221',
+            'item_code' => 'COM-221',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-221',
+                'quantity' => 10,
+                'reason' => 'low stock',
+                'priority' => 'HIGH',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk();
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'warranty' => '1 year',
+                'warrantyFileBase64' => base64_encode('%PDF-1.4 warranty'),
+                'warrantyFileName' => 'warranty.pdf',
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('unit.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
             ->assertJsonPath('data.canEdit', true);
+
+        $this->assertNotNull(
+            Quotation::query()->where('item', 'toktok')->value('warranty_file_path')
+        );
+    }
+
+    public function test_vendor_can_submit_quotation_with_base64_item_photos(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-236', 'COM-236', 'INV-236');
+
+        $photo = UploadedFile::fake()->image('unit.jpg', 40, 40);
+
+        $this->actingAs($vendor)
+            ->postJson('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotosBase64' => [base64_encode((string) file_get_contents($photo->getRealPath()))],
+                'itemPhotoNames' => ['unit.jpg'],
+            ])
+            ->assertCreated()
+            ->assertJsonCount(1, 'data.itemPhotoUrls');
+
+        $quote = Quotation::query()->where('item', 'toktok')->firstOrFail();
+        $this->assertCount(1, $quote->itemPhotoPaths());
+        Storage::disk('public')->assertExists($quote->itemPhotoPaths()[0]);
+    }
+
+    public function test_vendor_can_submit_quotation_with_complete_upload_token(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-238', 'COM-238', 'INV-238');
+
+        $photo = UploadedFile::fake()->image('unit.jpg', 40, 40);
+        $photoToken = $this->actingAs($vendor)
+            ->post('/api/quotation-uploads', [
+                'step' => 'complete',
+                'kind' => 'photo',
+                'fileName' => 'unit.jpg',
+                'file' => $photo,
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->json('data.token');
+
+        $this->actingAs($vendor)
+            ->postJson('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 500,
+                'totalPrice' => 5000,
+                'deliveryTimeDays' => 2,
+                'itemPhotoTokens' => [$photoToken],
+            ])
+            ->assertCreated()
+            ->assertJsonCount(1, 'data.itemPhotoUrls');
+
+        $quote = Quotation::query()->where('item', 'toktok')->firstOrFail();
+        $this->assertCount(1, $quote->itemPhotoPaths());
+        Storage::disk('public')->assertExists($quote->itemPhotoPaths()[0]);
+    }
+
+    public function test_vendor_can_submit_quotation_with_chunked_photo_and_warranty_tokens(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-237', 'COM-237', 'INV-237');
+
+        $photo = UploadedFile::fake()->image('unit.jpg', 40, 40);
+        $photoToken = $this->chunkUpload(
+            $vendor,
+            'photo',
+            'unit.jpg',
+            (string) file_get_contents($photo->getRealPath())
+        );
+        $warrantyToken = $this->chunkUpload($vendor, 'warranty', 'warranty.pdf', '%PDF-1.4 warranty');
+
+        $this->actingAs($vendor)
+            ->postJson('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotoTokens' => [$photoToken],
+                'warrantyToken' => $warrantyToken,
+            ])
+            ->assertCreated()
+            ->assertJsonCount(1, 'data.itemPhotoUrls')
+            ->assertJsonPath('data.canEdit', true);
+
+        $quote = Quotation::query()->where('item', 'toktok')->firstOrFail();
+        $this->assertCount(1, $quote->itemPhotoPaths());
+        $this->assertNotNull($quote->warranty_file_path);
+        Storage::disk('public')->assertExists($quote->itemPhotoPaths()[0]);
+        Storage::disk('public')->assertExists($quote->warranty_file_path);
+    }
+
+    public function test_vendor_quotation_stores_up_to_three_item_photos(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-230', 'COM-230', 'INV-230');
+
+        $response = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [
+                    UploadedFile::fake()->image('front.jpg', 60, 60),
+                    UploadedFile::fake()->image('side.png', 60, 60),
+                    UploadedFile::fake()->image('label.webp', 60, 60),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonCount(3, 'data.itemPhotoUrls');
+
+        $quote = Quotation::query()->where('quote_number', $response->json('data.id'))->firstOrFail();
+        $paths = $quote->itemPhotoPaths();
+
+        $this->assertCount(3, $paths);
+        foreach ($paths as $index => $path) {
+            $this->assertStringStartsWith('quotation-item-photos/'.$quote->quote_number.'-'.($index + 1).'.', $path);
+            Storage::disk('public')->assertExists($path);
+        }
+
+        $this->assertSame(
+            array_map(fn (string $path) => '/storage/'.$path, $paths),
+            $response->json('data.itemPhotoUrls')
+        );
+    }
+
+    public function test_vendor_quotation_rejects_invalid_item_photo_sets(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-231', 'COM-231', 'INV-231');
+
+        $base = [
+            'procurementId' => $prNumber,
+            'item' => 'toktok',
+            'quantity' => 10,
+            'unitPrice' => 1000,
+            'totalPrice' => 10000,
+            'deliveryTimeDays' => 2,
+        ];
+
+        $this->actingAs($vendor)
+            ->postJson('/api/quotations', $base)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('itemPhotos');
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                ...$base,
+                'itemPhotos' => [
+                    UploadedFile::fake()->image('a.jpg', 40, 40),
+                    UploadedFile::fake()->image('b.jpg', 40, 40),
+                    UploadedFile::fake()->image('c.jpg', 40, 40),
+                    UploadedFile::fake()->image('d.jpg', 40, 40),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('itemPhotos');
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                ...$base,
+                'itemPhotos' => [UploadedFile::fake()->create('spec.pdf', 20, 'application/pdf')],
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('itemPhotos.0');
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                ...$base,
+                'itemPhotos' => [UploadedFile::fake()->image('huge.jpg')->size(6144)],
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('itemPhotos.0');
+
+        $this->assertSame(0, Quotation::query()->count());
+    }
+
+    public function test_vendor_can_keep_add_and_remove_item_photos_when_editing(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-232', 'COM-232', 'INV-232');
+
+        $created = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [
+                    UploadedFile::fake()->image('front.jpg', 60, 60),
+                    UploadedFile::fake()->image('side.jpg', 60, 60),
+                ],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated();
+
+        $quoteNumber = $created->json('data.id');
+        [$keptUrl, $droppedUrl] = $created->json('data.itemPhotoUrls');
+        $droppedPath = ltrim(str_replace('/storage/', '', $droppedUrl), '/');
+
+        $updated = $this->actingAs($vendor)
+            ->post('/api/quotations/'.$quoteNumber, [
+                'unitPrice' => 1200,
+                'keepItemPhotos' => json_encode([$keptUrl]),
+                'itemPhotos' => [UploadedFile::fake()->image('replacement.png', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.unitPrice', 1200)
+            ->assertJsonCount(2, 'data.itemPhotoUrls');
+
+        $this->assertContains($keptUrl, $updated->json('data.itemPhotoUrls'));
+        $this->assertNotContains($droppedUrl, $updated->json('data.itemPhotoUrls'));
+        Storage::disk('public')->assertMissing($droppedPath);
+
+        foreach ($updated->json('data.itemPhotoUrls') as $url) {
+            Storage::disk('public')->assertExists(ltrim(str_replace('/storage/', '', $url), '/'));
+        }
+    }
+
+    public function test_vendor_cannot_remove_every_item_photo_when_editing(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-233', 'COM-233', 'INV-233');
+
+        $quoteNumber = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('front.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations/'.$quoteNumber, [
+                'unitPrice' => 1200,
+                'keepItemPhotos' => json_encode([]),
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('itemPhotos');
+
+        $quote = Quotation::query()->where('quote_number', $quoteNumber)->firstOrFail();
+        $this->assertCount(1, $quote->itemPhotoPaths());
+        $this->assertSame(1000.0, (float) $quote->unit_price);
+        Storage::disk('public')->assertExists($quote->itemPhotoPaths()[0]);
+    }
+
+    public function test_vendor_cannot_change_item_photos_on_another_suppliers_quotation(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-234', 'COM-234', 'INV-234');
+
+        $quoteNumber = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('front.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->json('data.id');
+
+        $rival = Supplier::query()->create([
+            'code' => 'SUP-235',
+            'company_name' => 'NaviTrack Philippines',
+            'contact_person' => 'Marco Villanueva',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $rivalUser = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $rival->id,
+        ]);
+
+        $this->actingAs($rivalUser)
+            ->post('/api/quotations/'.$quoteNumber, [
+                'unitPrice' => 1,
+                'keepItemPhotos' => json_encode([]),
+                'itemPhotos' => [UploadedFile::fake()->image('rival.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('quotation');
+
+        $quote = Quotation::query()->where('quote_number', $quoteNumber)->firstOrFail();
+        $this->assertCount(1, $quote->itemPhotoPaths());
+        $this->assertSame(1000.0, (float) $quote->unit_price);
+    }
+
+    private function chunkUpload(User $vendor, string $kind, string $fileName, string $contents): string
+    {
+        $uploadId = $this->actingAs($vendor)
+            ->getJson('/api/quotation-uploads?'.http_build_query([
+                'step' => 'start',
+                'kind' => $kind,
+                'fileName' => $fileName,
+            ]))
+            ->assertOk()
+            ->json('data.uploadId');
+
+        $this->actingAs($vendor)
+            ->getJson('/api/quotation-uploads?'.http_build_query([
+                'step' => 'chunk',
+                'uploadId' => $uploadId,
+                'chunk' => base64_encode($contents),
+            ]))
+            ->assertOk();
+
+        return $this->actingAs($vendor)
+            ->getJson('/api/quotation-uploads?'.http_build_query([
+                'step' => 'finish',
+                'uploadId' => $uploadId,
+            ]))
+            ->assertOk()
+            ->json('data.token');
+    }
+
+    /**
+     * Creates staff, a vendor, and an RFQ already published to that vendor's portal.
+     *
+     * @return array{0: User, 1: User, 2: string}
+     */
+    private function openRfqForVendor(string $supplierCode, string $itemCode, string $inventoryCode): array
+    {
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => $supplierCode,
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Fleet Consumables'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+
+        InventoryItem::query()->create([
+            'code' => $inventoryCode,
+            'item_code' => $itemCode,
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => $itemCode,
+                'quantity' => 10,
+                'reason' => 'low stock',
+                'priority' => 'HIGH',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk();
+
+        return [$staff, $vendor, $prNumber];
     }
 
     public function test_finance_approval_updates_purchase_order_status(): void
@@ -665,5 +1325,85 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonPath('data.0.supplier', 'Metro Parts Trading')
             ->assertJsonPath('data.0.status', 'In Transit')
             ->assertJsonPath('data.0.itemsDelivered.0.description', 'toktok');
+
+        $live = $this->actingAs($staff)
+            ->getJson('/api/live?stamp=stale')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->json('data');
+
+        $this->assertNotEmpty($live['deliveries'] ?? []);
+        $this->assertSame('PO-2026-300', $live['deliveries'][0]['poNumber']);
+        $this->assertSame('In Transit', $live['deliveries'][0]['status']);
+        $this->assertSame('toktok', $live['deliveries'][0]['itemsDelivered'][0]['description']);
+    }
+
+    public function test_inspection_returns_created_movements_and_live_syncs_audit_trail(): void
+    {
+        $user = User::factory()->create(['name' => 'J. Perez']);
+        InventoryItem::query()->create([
+            'code' => 'INV-310',
+            'item_code' => 'COM-001',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 1,
+            'unit' => 'Units',
+            'cost' => 1000,
+        ]);
+
+        $po = PurchaseOrder::query()->create([
+            'po_number' => 'PO-2026-310',
+            'supplier' => 'Metro Parts Trading',
+            'total_cost' => 10000,
+            'finance_approval_status' => 'Finance Approved',
+            'po_status' => 'Confirmed',
+            'created_date' => now()->toDateString(),
+        ]);
+        $po->items()->create([
+            'item_code' => 'COM-001',
+            'description' => 'toktok',
+            'quantity' => 10,
+            'unit_price' => 1000,
+            'total' => 10000,
+            'delivered_qty' => 0,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/api/deliveries')
+            ->assertOk()
+            ->assertJsonPath('data.0.poNumber', 'PO-2026-310');
+
+        $deliveryId = $this->actingAs($user)
+            ->getJson('/api/deliveries')
+            ->json('data.0.id');
+
+        $this->actingAs($user)
+            ->postJson("/api/deliveries/{$deliveryId}/inspect", [
+                'inspectionResult' => 'Passed',
+                'remarks' => 'Accepted',
+                'itemsDelivered' => [[
+                    'itemCode' => 'COM-001',
+                    'description' => 'toktok',
+                    'deliveredQuantity' => 10,
+                    'condition' => 'Good',
+                    'result' => 'Passed',
+                ]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.createdMovements.0.movementType', 'Receiving')
+            ->assertJsonPath('data.createdMovements.0.itemCode', 'COM-001')
+            ->assertJsonPath('data.createdMovements.0.quantity', 10)
+            ->assertJsonPath('data.createdMovements.0.recordedBy', 'J. Perez');
+
+        $live = $this->actingAs($user)
+            ->getJson('/api/live?stamp=stale')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertNotEmpty($live['movements'] ?? []);
+        $this->assertSame('Receiving', $live['movements'][0]['movementType']);
+        $this->assertSame('COM-001', $live['movements'][0]['itemCode']);
+        $this->assertSame(10, $live['movements'][0]['quantity']);
     }
 }

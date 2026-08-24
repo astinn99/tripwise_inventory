@@ -61,8 +61,8 @@ export const Inspection = () => {
                     ))}
                   </td>
                   <td>
-                    <span className={`badge badge-${del.inspectionResult.toLowerCase().replace(/ /g, '-')}`}>
-                      {del.inspectionResult}
+                    <span className={`badge badge-${String(del.inspectionResult || 'pending').toLowerCase().replace(/ /g, '-')}`}>
+                      {del.inspectionResult || 'Pending'}
                     </span>
                   </td>
                   <td className="text-xs text-slate-300 max-w-xs">{del.inspectionNotes}</td>

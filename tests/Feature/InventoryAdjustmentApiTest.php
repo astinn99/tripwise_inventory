@@ -27,7 +27,9 @@ class InventoryAdjustmentApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.quantity', 7)
             ->assertJsonPath('data.damagedQuantity', 3)
-            ->assertJsonPath('data.status', 'NORMAL');
+            ->assertJsonPath('data.status', 'NORMAL')
+            ->assertJsonPath('data.createdMovements.0.movementType', 'Damaged')
+            ->assertJsonPath('data.createdMovements.0.quantity', 3);
 
         $this->assertSame('Damaged', InventoryMovement::query()->value('movement_type'));
         $this->assertSame(3, InventoryMovement::query()->value('quantity'));

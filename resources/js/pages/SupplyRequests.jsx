@@ -18,6 +18,7 @@ export const SupplyRequests = () => {
     setActiveModal,
     setModalData,
     releaseSupplyRequest,
+    actionLoading,
     searchQuery
   } = useApp();
 
@@ -168,6 +169,7 @@ export const SupplyRequests = () => {
                       {canRelease && (
                         <button
                           type="button"
+                          disabled={actionLoading}
                           onClick={() => releaseSupplyRequest(req.id, req.requestedBy)}
                           className="btn btn-success btn-sm"
                           title="Dispatch Stock & Update Inventory"

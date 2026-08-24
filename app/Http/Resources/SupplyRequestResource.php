@@ -10,12 +10,15 @@ class SupplyRequestResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $imageUrl = ($this->relationLoaded('catalogItem') ? $this->catalogItem?->imageUrl() : null)
+            ?? ($this->relationLoaded('inventoryItem') ? $this->inventoryItem?->imageUrl() : null);
+
         return [
             'id' => $this->request_number ?: (string) $this->id,
             'requestingDepartment' => $this->requesting_department ?: '',
             'itemCode' => $this->item_code ?: '',
             'itemName' => $this->item_name ?: '',
-            'imageUrl' => $this->catalogItem?->imageUrl() ?? $this->inventoryItem?->imageUrl(),
+            'imageUrl' => $imageUrl,
             'category' => $this->category,
             'quantityRequested' => $this->quantity_requested,
             'requiredDate' => optional($this->required_date)?->format('Y-m-d'),
@@ -31,7 +34,7 @@ class SupplyRequestResource extends JsonResource
             ])->values(), []),
             'createdProcurement' => $this->when(
                 $this->relationLoaded('procurementRequests') && $this->procurementRequests->isNotEmpty(),
-                function () {
+                function () use ($imageUrl) {
                     $pr = $this->procurementRequests->sortByDesc('id')->first();
 
                     return [
@@ -40,7 +43,7 @@ class SupplyRequestResource extends JsonResource
                         'department' => $pr->department,
                         'itemCode' => $pr->item_code,
                         'itemName' => $pr->item_name,
-                        'imageUrl' => $this->catalogItem?->imageUrl() ?? $this->inventoryItem?->imageUrl(),
+                        'imageUrl' => $imageUrl,
                         'quantity' => $pr->quantity,
                         'reason' => $pr->reason,
                         'priority' => $pr->priority,

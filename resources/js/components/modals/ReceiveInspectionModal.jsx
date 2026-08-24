@@ -10,10 +10,13 @@ export const ReceiveInspectionModal = () => {
   const [remarks, setRemarks] = useState('');
 
   useEffect(() => {
-    if (modalData && modalData.itemsDelivered) {
-      setItems(modalData.itemsDelivered.map(i => ({
+    const lines = modalData.itemsDelivered || modalData.itemsDelivered || [];
+    if (modalData && lines.length) {
+      setItems(lines.map(i => ({
         ...i,
-        deliveredQuantity: i.deliveredQuantity > 0 ? i.deliveredQuantity : i.poQuantity,
+        deliveredQuantity: (i.deliveredQuantity ?? i.deliveredQuantity) > 0
+          ? (i.deliveredQuantity ?? i.deliveredQuantity)
+          : (i.poQuantity ?? i.poQuantity),
         condition: i.condition === 'Pending' ? 'New' : i.condition,
         result: i.result === 'Pending' ? 'Passed' : i.result,
         remarks: i.remarks || ''

@@ -83,12 +83,12 @@ export const StorageLocations = () => {
   const selectedItem = inventory.find((item) => item.id === selectedItemId) || null;
 
   const handleMove = async (itemId, storageLocationId = null) => {
-    if (!itemId || actionLoading) {
+    if (!itemId) {
       return;
     }
 
-    await moveInventoryItem(itemId, storageLocationId);
     setSelectedItemId(null);
+    await moveInventoryItem(itemId, storageLocationId);
   };
 
   const handleBinActivate = (locationId) => {

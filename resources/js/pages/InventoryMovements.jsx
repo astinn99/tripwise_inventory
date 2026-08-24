@@ -7,13 +7,10 @@ export const InventoryMovements = () => {
   const [typeFilter, setTypeFilter] = useState('ALL');
 
   const filteredMovements = movements.filter(m => {
-    const matchesSearch =
-      m.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.itemCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.reference.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.location.toLowerCase().includes(searchQuery.toLowerCase());
-
+    const haystack = [m.id, m.itemCode, m.itemName, m.reference, m.location]
+      .map((value) => String(value || '').toLowerCase())
+      .join(' ');
+    const matchesSearch = haystack.includes(searchQuery.toLowerCase());
     const matchesType = typeFilter === 'ALL' || m.movementType === typeFilter;
     return matchesSearch && matchesType;
   });
@@ -67,6 +64,13 @@ export const InventoryMovements = () => {
               </tr>
             </thead>
             <tbody>
+              {filteredMovements.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="text-xs text-secondary p-4">
+                    No inventory movements recorded yet. Receiving, releasing, transfers, and adjustments will appear here.
+                  </td>
+                </tr>
+              )}
               {filteredMovements.map(m => (
                 <tr key={m.id}>
                   <td className="font-mono text-xs text-blue-400 font-bold">{m.id}</td>

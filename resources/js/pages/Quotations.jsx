@@ -1,16 +1,18 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { FileSpreadsheet, CheckCircle2 } from 'lucide-react';
-import { ItemIdentity } from '../components/ui/ItemThumb';
+import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
 
 export const Quotations = () => {
   const { quotations, selectSupplierAndCreatePO, searchQuery } = useApp();
 
   const filteredQuotes = quotations.filter(q =>
-    q.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    q.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    q.item.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    q.procurementId.toLowerCase().includes(searchQuery.toLowerCase())
+    !String(q.id || '').startsWith('tmp-') && (
+      q.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      q.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      q.item.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      q.procurementId.toLowerCase().includes(searchQuery.toLowerCase())
+    )
   );
 
   return (
@@ -41,6 +43,7 @@ export const Quotations = () => {
                 <th>Procurement Ref</th>
                 <th>Supplier Name</th>
                 <th>Item & Qty</th>
+                <th>Vendor Photos</th>
                 <th className="text-right">Unit Price</th>
                 <th className="text-right">Total Price</th>
                 <th>Delivery Lead Time</th>
@@ -62,6 +65,17 @@ export const Quotations = () => {
                       name={q.item}
                       extra={`Qty: ${q.quantity}`}
                     />
+                  </td>
+                  <td>
+                    {q.itemPhotoUrls?.length ? (
+                      <div className="quote-photo-strip">
+                        {q.itemPhotoUrls.map((url) => (
+                          <ItemThumb key={url} src={url} alt={`${q.supplierName} — ${q.item}`} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="quote-photo-empty">None</span>
+                    )}
                   </td>
                   <td className="text-right font-mono text-xs text-secondary">₱{Number(q.unitPrice).toLocaleString()}</td>
                   <td className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>

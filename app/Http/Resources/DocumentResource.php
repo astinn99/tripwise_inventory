@@ -15,7 +15,9 @@ class DocumentResource extends JsonResource
             'title' => $this->title,
             'type' => $this->type,
             'referenceNumber' => $this->reference_number,
-            'supplier' => $this->supplierAccount?->company_name ?? $this->supplier,
+            'supplier' => $this->relationLoaded('supplierAccount')
+                ? ($this->supplierAccount?->company_name ?? $this->supplier)
+                : $this->supplier,
             'supplierId' => $this->supplier_id,
             'issueDate' => optional($this->issue_date)?->format('Y-m-d'),
             'expirationDate' => optional($this->expiration_date)?->format('Y-m-d'),
@@ -27,8 +29,8 @@ class DocumentResource extends JsonResource
             'originalFilename' => $this->original_filename,
             'source' => $this->source,
             'warrantyMonths' => $this->warranty_months,
-            'itemCode' => $this->inventoryItem?->item_code,
-            'purchaseOrderNumber' => $this->purchaseOrder?->po_number,
+            'itemCode' => $this->relationLoaded('inventoryItem') ? $this->inventoryItem?->item_code : null,
+            'purchaseOrderNumber' => $this->relationLoaded('purchaseOrder') ? $this->purchaseOrder?->po_number : null,
         ];
     }
 }

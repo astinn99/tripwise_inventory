@@ -12,12 +12,14 @@ class QuotationResource extends JsonResource
     {
         return [
             'id' => $this->quote_number,
-            'procurementId' => $this->procurementRequest?->pr_number,
-            'supplierId' => $this->supplier?->code,
+            'procurementId' => $this->relationLoaded('procurementRequest') ? $this->procurementRequest?->pr_number : null,
+            'supplierId' => $this->relationLoaded('supplier') ? $this->supplier?->code : null,
             'supplierName' => $this->supplier_name,
             'item' => $this->item,
-            'itemCode' => $this->procurementRequest?->item_code,
-            'imageUrl' => $this->procurementRequest?->catalogItem?->imageUrl(),
+            'itemCode' => $this->relationLoaded('procurementRequest') ? $this->procurementRequest?->item_code : null,
+            'imageUrl' => $this->relationLoaded('procurementRequest') && $this->procurementRequest?->relationLoaded('catalogItem')
+                ? $this->procurementRequest->catalogItem?->imageUrl()
+                : null,
             'quantity' => $this->quantity,
             'unitPrice' => (float) $this->unit_price,
             'totalPrice' => (float) $this->total_price,
@@ -25,6 +27,7 @@ class QuotationResource extends JsonResource
             'warrantyMonths' => $this->warranty_months,
             'warrantyLabel' => \App\Support\WarrantyDuration::label($this->warranty_months, $this->warranty),
             'warrantyFileUrl' => $this->warranty_file_path ? '/storage/'.$this->warranty_file_path : null,
+            'itemPhotoUrls' => array_map(fn (string $path) => '/storage/'.$path, $this->itemPhotoPaths()),
             'deliveryTimeDays' => $this->delivery_time_days,
             'qualityRating' => (float) $this->quality_rating,
             'paymentTerms' => $this->payment_terms,

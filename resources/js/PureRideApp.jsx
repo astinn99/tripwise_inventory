@@ -44,6 +44,36 @@ import './styles/ui.css';
 
 const Reports = lazy(() => import('./pages/Reports').then((module) => ({ default: module.Reports })));
 
+class PageErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { error };
+    }
+
+    componentDidUpdate(prevProps) {
+        if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+            this.setState({ error: null });
+        }
+    }
+
+    render() {
+        if (this.state.error) {
+            return (
+                <div className="panel-card p-4">
+                    <p className="text-sm font-bold">This page could not be displayed.</p>
+                    <p className="text-xs text-secondary mt-1">{this.state.error.message}</p>
+                </div>
+            );
+        }
+
+        return this.props.children;
+    }
+}
+
 const pageMap = {
     dashboard: Dashboard,
     supply_requests: SupplyRequests,
@@ -110,7 +140,9 @@ function InternalApp() {
                         </div>
                     )}
                     <Suspense fallback={null}>
-                        <CurrentPage />
+                        <PageErrorBoundary resetKey={activeTab}>
+                            <CurrentPage />
+                        </PageErrorBoundary>
                     </Suspense>
                 </main>
             </div>

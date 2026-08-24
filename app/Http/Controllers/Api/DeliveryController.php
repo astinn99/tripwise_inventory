@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\InspectDeliveryRequest;
 use App\Http\Resources\DeliveryResource;
+use App\Http\Resources\InventoryItemResource;
 use App\Models\Delivery;
+use App\Models\InventoryItem;
 use App\Services\SupplyChainService;
 
 class DeliveryController extends Controller
@@ -29,6 +31,15 @@ class DeliveryController extends Controller
             $request->user()
         );
 
-        return $this->ok(new DeliveryResource($updated), 'Delivery inspection recorded');
+        $codes = collect($request->validated('itemsDelivered'))->pluck('itemCode')->filter()->all();
+        $items = InventoryItem::query()
+            ->with(['supplier:id,company_name', 'storageLocation:id,rack,shelf,bin'])
+            ->whereIn('item_code', $codes)
+            ->get();
+
+        return $this->ok($this->withRecordedMovements([
+            ...(new DeliveryResource($updated))->resolve(),
+            'updatedInventory' => InventoryItemResource::collection($items)->resolve(),
+        ], $service), 'Delivery inspection recorded');
     }
 }

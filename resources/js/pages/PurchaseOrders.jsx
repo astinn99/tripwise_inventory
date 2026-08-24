@@ -10,12 +10,12 @@ export const PurchaseOrders = () => {
     searchQuery
   } = useApp();
 
-  const filteredPOs = purchaseOrders.filter(po =>
-    po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    po.supplier.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    po.budgetReference.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    po.poStatus.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const query = searchQuery.toLowerCase();
+  const filteredPOs = purchaseOrders.filter((po) => {
+    const haystack = [po.poNumber, po.supplier, po.budgetReference, po.poStatus]
+      .map((value) => String(value || '').toLowerCase());
+    return haystack.some((value) => value.includes(query));
+  });
 
   return (
     <div className="purchase-orders-page">
@@ -61,7 +61,7 @@ export const PurchaseOrders = () => {
                     <div className="text-xs text-secondary">{po.contactPerson}</div>
                   </td>
                   <td>
-                    {po.items.map((item, idx) => (
+                    {(po.items || []).map((item, idx) => (
                       <div key={idx} className="text-xs">
                         <span className="text-primary font-medium">{item.description}</span>
                         <span className="font-bold text-success ml-1 font-mono">
@@ -76,7 +76,7 @@ export const PurchaseOrders = () => {
                   <td className="font-mono text-xs text-blue font-bold">{po.budgetReference}</td>
                   <td className="text-xs text-secondary">{po.deliveryDate}</td>
                   <td>
-                    <span className={`badge badge-${po.poStatus.toLowerCase().replace(/ /g, '-')}`}>
+                    <span className={`badge badge-${String(po.poStatus || '').toLowerCase().replace(/ /g, '-')}`}>
                       {po.poStatus}
                     </span>
                   </td>

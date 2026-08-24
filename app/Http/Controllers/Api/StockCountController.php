@@ -37,6 +37,6 @@ class StockCountController extends Controller
     {
         $count = $service->submitPhysicalCount($stockCount, $request->validated('items'), $request->user());
 
-        return $this->ok(new StockCountResource($count), 'Stock count submitted');
+        return $this->ok($this->withRecordedMovements(new StockCountResource($count), $service), 'Stock count submitted');
     }
 }

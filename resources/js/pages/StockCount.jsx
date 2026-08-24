@@ -18,11 +18,11 @@ export const StockCount = () => {
     );
   };
 
-  const filteredCounts = stockCounts.filter(sc =>
-    sc.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    sc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    sc.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const query = searchQuery.toLowerCase();
+  const filteredCounts = stockCounts.filter((sc) => {
+    const haystack = [sc.id, sc.title, sc.location].map((value) => String(value || '').toLowerCase());
+    return haystack.some((value) => value.includes(query));
+  });
 
   return (
     <div className="stock-count-page">

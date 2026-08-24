@@ -10,7 +10,8 @@ class OpportunityResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $pr = $this->procurementRequest;
+        $pr = $this->relationLoaded('procurementRequest') ? $this->procurementRequest : null;
+        $catalog = $pr?->relationLoaded('catalogItem') ? $pr->catalogItem : null;
 
         return [
             'id' => $this->opportunity_number,
@@ -18,7 +19,7 @@ class OpportunityResource extends JsonResource
             'title' => $this->title,
             'itemName' => $pr?->item_name ?? $this->title,
             'itemCode' => $pr?->item_code ?? '',
-            'imageUrl' => $pr?->catalogItem?->imageUrl(),
+            'imageUrl' => $catalog?->imageUrl(),
             'category' => $this->category,
             'quantity' => $this->quantity,
             'priority' => $pr?->priority,

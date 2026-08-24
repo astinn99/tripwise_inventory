@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'quote_number', 'procurement_request_id', 'supplier_id', 'supplier_name',
     'item', 'quantity', 'unit_price', 'total_price', 'warranty',
-    'warranty_months', 'warranty_file_path',
+    'warranty_months', 'warranty_file_path', 'item_photo_paths',
     'delivery_time_days', 'quality_rating', 'payment_terms', 'status', 'notes',
 ])]
 class Quotation extends Model
@@ -28,7 +28,17 @@ class Quotation extends Model
             'quantity' => 'integer',
             'delivery_time_days' => 'integer',
             'warranty_months' => 'integer',
+            'item_photo_paths' => 'array',
         ];
+    }
+
+    /** @return list<string> */
+    public function itemPhotoPaths(): array
+    {
+        return array_values(array_filter(
+            (array) ($this->item_photo_paths ?? []),
+            fn ($path) => is_string($path) && $path !== ''
+        ));
     }
 
     public function procurementRequest(): BelongsTo

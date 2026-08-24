@@ -138,6 +138,13 @@ class DocumentApiTest extends TestCase
         ]);
 
         $this->actingAs($user)
+            ->getJson('/api/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('data.deliveries.0.id', 'DEL-2026-901')
+            ->assertJsonPath('data.deliveries.0.itemsDelivered.0.itemCode', $item->item_code)
+            ->assertJsonPath('data.deliveries.0.itemsDelivered.0.poQuantity', 4);
+
+        $this->actingAs($user)
             ->postJson('/api/deliveries/DEL-2026-901/inspect', [
                 'inspectionResult' => 'Passed',
                 'remarks' => 'Accepted',
@@ -149,7 +156,10 @@ class DocumentApiTest extends TestCase
                     'result' => 'Passed',
                 ]],
             ])
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.updatedInventory.0.quantity', 5)
+            ->assertJsonPath('data.createdMovements.0.movementType', 'Receiving')
+            ->assertJsonPath('data.createdMovements.0.quantity', 4);
 
         $item->refresh();
         $this->assertSame(now()->addMonths(24)->toDateString(), optional($item->warranty_expires_on)?->toDateString());

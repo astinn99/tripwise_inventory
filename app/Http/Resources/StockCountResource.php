@@ -18,14 +18,18 @@ class StockCountResource extends JsonResource
             'status' => $this->status,
             'totalItemsAudited' => $this->total_items_audited,
             'discrepancyCount' => $this->discrepancy_count,
-            'items' => $this->items->map(fn ($item) => [
-                'itemCode' => $item->item_code,
-                'itemName' => $item->item_name,
-                'systemQty' => $item->system_qty,
-                'actualQty' => $item->actual_qty,
-                'variance' => $item->variance,
-                'notes' => $item->notes,
-            ])->values(),
+            'items' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->map(fn ($item) => [
+                    'itemCode' => $item->item_code,
+                    'itemName' => $item->item_name,
+                    'systemQty' => $item->system_qty,
+                    'actualQty' => $item->actual_qty,
+                    'variance' => $item->variance,
+                    'notes' => $item->notes,
+                ])->values(),
+                []
+            ),
         ];
     }
 }

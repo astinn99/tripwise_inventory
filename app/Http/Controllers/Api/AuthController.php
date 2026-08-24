@@ -16,7 +16,10 @@ class AuthController extends Controller
     {
         $portal = $request->validated('portal') ?: 'internal';
 
-        $user = User::query()->where('email', $request->validated('email'))->first();
+        $user = User::query()
+            ->with('supplier:id,code,company_name')
+            ->where('email', $request->validated('email'))
+            ->first();
 
         if (! $user || ! Hash::check($request->validated('password'), $user->password)) {
             return $this->fail('Invalid email or password.', 401);
@@ -34,7 +37,7 @@ class AuthController extends Controller
         $token = $user->createToken($portal)->plainTextToken;
 
         return $this->ok([
-            ...(new UserResource($user->load('supplier')))->resolve(),
+            ...(new UserResource($user))->resolve(),
             'token' => $token,
         ], 'Login successful');
     }

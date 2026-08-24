@@ -138,16 +138,29 @@ async function request(path, options = {}) {
         ...options.headers,
     };
 
-    const { portal, timeout = 12000, ...fetchOptions } = options;
+    const { portal, timeout = 20000, signal: externalSignal, ...fetchOptions } = options;
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), timeout);
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeout);
+
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            window.clearTimeout(timer);
+            throw new ApiError('Upload cancelled.', 499);
+        }
+        externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+    }
 
     let response;
     try {
         response = await fetch(path, {
             credentials: 'include',
             ...fetchOptions,
-            signal: fetchOptions.signal ?? controller.signal,
+            signal: controller.signal,
             headers,
             body: options.body === undefined
                 ? undefined
@@ -155,32 +168,80 @@ async function request(path, options = {}) {
         });
     } catch (error) {
         if (error?.name === 'AbortError') {
-            throw new ApiError('The server took too long to respond. Check the database connection.', 408);
+            if (timedOut) {
+                throw new ApiError('The server took too long to respond. Check the database connection.', 408);
+            }
+            throw new ApiError('Upload cancelled.', 499);
         }
         throw error;
     } finally {
         window.clearTimeout(timer);
+        externalSignal?.removeEventListener('abort', abortFromCaller);
     }
 
     if (response.status === 204) {
         return null;
     }
 
-    const payload = await response.json().catch(() => ({
-        success: false,
-        message: 'Unexpected server response',
-        errors: {},
-    }));
+    const payload = await parseJsonPayload(response);
 
     if (!response.ok || payload.success === false) {
+        const details = Object.values(payload.errors || {}).flat().filter(Boolean);
         throw new ApiError(
-            payload.message || 'Request failed',
+            response.status === 413
+                ? 'The upload is too large for the server. Please attach smaller files and try again.'
+                : (details.length ? details.join(' ') : (payload.message || 'Request failed')),
             response.status,
             payload.errors || {}
         );
     }
 
     return payload.data;
+}
+
+async function parseJsonPayload(response) {
+    const text = await response.text();
+    if (!text) {
+        return {
+            success: response.ok,
+            message: response.ok ? '' : 'Unexpected server response',
+            data: null,
+            errors: {},
+        };
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch {
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start !== -1 && end > start) {
+            try {
+                return JSON.parse(text.slice(start, end + 1));
+            } catch {
+                // Fall through to the generic error.
+            }
+        }
+
+        return {
+            success: false,
+            message: 'Unexpected server response',
+            errors: {},
+        };
+    }
+}
+
+export async function fileToBase64(file) {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+
+    return btoa(binary);
 }
 
 export const api = {

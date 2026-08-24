@@ -46,7 +46,7 @@ class InventoryItemController extends Controller
             $request->user()
         );
 
-        return $this->ok(new InventoryItemResource($item), 'Item moved');
+        return $this->ok($this->withRecordedMovements(new InventoryItemResource($item), $service), 'Item moved');
     }
 
     public function adjust(AdjustInventoryItemRequest $request, InventoryItem $inventoryItem, SupplyChainService $service)
@@ -63,6 +63,9 @@ class InventoryItemController extends Controller
             'ManualRelease' => 'Stock released',
         ];
 
-        return $this->ok(new InventoryItemResource($item), $messages[$data['type']] ?? 'Inventory adjusted');
+        return $this->ok(
+            $this->withRecordedMovements(new InventoryItemResource($item), $service),
+            $messages[$data['type']] ?? 'Inventory adjusted'
+        );
     }
 }

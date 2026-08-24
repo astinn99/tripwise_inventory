@@ -16,7 +16,7 @@ class ProcurementRequestResource extends JsonResource
             'department' => $this->department,
             'itemCode' => $this->item_code,
             'itemName' => $this->item_name,
-            'imageUrl' => $this->catalogItem?->imageUrl(),
+            'imageUrl' => $this->relationLoaded('catalogItem') ? $this->catalogItem?->imageUrl() : null,
             'quantity' => $this->quantity,
             'reason' => $this->reason,
             'priority' => $this->priority,
@@ -25,9 +25,9 @@ class ProcurementRequestResource extends JsonResource
             'estimatedCost' => (float) $this->estimated_cost,
             'selectedSupplier' => $this->selected_supplier,
             'poNumber' => $this->po_number,
-            'vendorInviteCount' => $this->opportunities_count ?? $this->opportunities()->count(),
+            'vendorInviteCount' => (int) ($this->opportunities_count ?? 0),
             'canEdit' => $this->status === 'For Procurement' && ! $this->po_number,
-            'sentToVendors' => $this->status !== 'For Procurement' || (($this->opportunities_count ?? $this->opportunities()->count()) > 0),
+            'sentToVendors' => $this->status !== 'For Procurement' || ((int) ($this->opportunities_count ?? 0) > 0),
         ];
     }
 }

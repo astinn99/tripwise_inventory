@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   FileText,
@@ -9,10 +9,17 @@ import {
   Pencil,
   Clock,
   Inbox,
+  ImagePlus,
   MessageSquare,
+  X,
 } from 'lucide-react';
 import { Modal } from '../components/ui/Modal';
 import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
+import { compressImageFile, formatFileSize } from '../services/images';
+
+const MAX_ITEM_PHOTOS = 3;
+const MAX_ITEM_PHOTO_BYTES = 5 * 1024 * 1024;
+const ITEM_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 const TAB_COPY = {
   dashboard: 'Review open RFQs, submitted quotes, and awarded purchase orders.',
@@ -117,6 +124,68 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
   );
 };
 
+const QuotePhotoPicker = ({ savedPhotos, newPhotos, error, busy, onAdd, onRemoveSaved, onRemoveNew }) => {
+  const inputRef = useRef(null);
+  const [previews, setPreviews] = useState([]);
+
+  useEffect(() => {
+    const urls = newPhotos.map((file) => URL.createObjectURL(file));
+    setPreviews(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [newPhotos]);
+
+  const total = savedPhotos.length + newPhotos.length;
+  const remaining = MAX_ITEM_PHOTOS - total;
+
+  const handleChange = (event) => {
+    onAdd(Array.from(event.target.files || []));
+    event.target.value = '';
+  };
+
+  return (
+    <div className="form-group">
+      <label className="form-label">Photos of the actual item ({total}/{MAX_ITEM_PHOTOS})</label>
+      <div className="quote-photo-grid">
+        {savedPhotos.map((url) => (
+          <div key={url} className="quote-photo-tile">
+            <img src={url} alt="Quoted item" />
+            <button type="button" className="quote-photo-remove" onClick={() => onRemoveSaved(url)} aria-label="Remove photo">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+        {newPhotos.map((file, index) => (
+          <div key={`${file.name}-${file.lastModified}-${index}`} className="quote-photo-tile">
+            {previews[index] ? <img src={previews[index]} alt={file.name} /> : null}
+            <button type="button" className="quote-photo-remove" onClick={() => onRemoveNew(index)} aria-label="Remove photo">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+        {remaining > 0 ? (
+          <button type="button" className="quote-photo-add" disabled={busy} onClick={() => inputRef.current?.click()}>
+            <ImagePlus className="w-5 h-5" />
+            <span>{busy ? 'Optimizing…' : 'Add photo'}</span>
+          </button>
+        ) : null}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/webp"
+        className="item-photo-input"
+        onChange={handleChange}
+      />
+      <p className="item-photo-hint">
+        Required. Upload 1 to {MAX_ITEM_PHOTOS} clear photos of the unit you are offering so the buyer can verify quality.
+        JPG, PNG or WebP — large photos are resized automatically.
+      </p>
+      {error ? <p className="quote-photo-error">{error}</p> : null}
+    </div>
+  );
+};
+
 export const VendorPortal = ({ activeTab, setActiveTab }) => {
   const {
     opportunities,
@@ -125,9 +194,13 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     submitSupplierQuotation,
     updateSupplierQuotation,
     supplierConfirmPO,
+    actionError,
+    actionLoading,
     user,
   } = useApp();
 
+  const uploadAbortRef = useRef(null);
+  const savedQuotes = quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-'));
   const [selectedOpp, setSelectedOpp] = useState(null);
   const [editingQuote, setEditingQuote] = useState(null);
 
@@ -142,18 +215,37 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
   };
 
   const [quoteForm, setQuoteForm] = useState(emptyQuoteForm);
+  const [savedPhotos, setSavedPhotos] = useState([]);
+  const [newPhotos, setNewPhotos] = useState([]);
+  const [photoError, setPhotoError] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [warrantyBusy, setWarrantyBusy] = useState(false);
+  const [warrantyHint, setWarrantyHint] = useState('');
 
   const awaitingConfirm = purchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier');
 
+  const resetPhotos = (urls = []) => {
+    setSavedPhotos(urls);
+    setNewPhotos([]);
+    setPhotoError('');
+    setPhotoBusy(false);
+    setWarrantyBusy(false);
+    setWarrantyHint('');
+  };
+
   const closeQuoteModal = () => {
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
     setSelectedOpp(null);
     setEditingQuote(null);
     setQuoteForm(emptyQuoteForm);
+    resetPhotos();
   };
 
   const openQuote = (opp) => {
     setEditingQuote(null);
     setQuoteForm(emptyQuoteForm);
+    resetPhotos();
     setSelectedOpp(opp);
   };
 
@@ -169,41 +261,146 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
       paymentTerms: quote.paymentTerms || '30 Days Net',
       notes: quote.notes || '',
     });
+    resetPhotos(Array.isArray(quote.itemPhotoUrls) ? quote.itemPhotoUrls : []);
+  };
+
+  const photoCount = savedPhotos.length + newPhotos.length;
+
+  const addPhotos = async (files) => {
+    const room = MAX_ITEM_PHOTOS - photoCount;
+    if (room <= 0) {
+      setPhotoError(`You can attach a maximum of ${MAX_ITEM_PHOTOS} photos.`);
+      return;
+    }
+
+    let rejection = files.length > room ? `You can attach a maximum of ${MAX_ITEM_PHOTOS} photos.` : '';
+    const accepted = [];
+
+    setPhotoBusy(true);
+    try {
+      for (const file of files.slice(0, room)) {
+        if (!ITEM_PHOTO_TYPES.includes(file.type)) {
+          rejection = 'Item photos must be JPG, PNG or WebP files.';
+          continue;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        const prepared = await compressImageFile(file);
+        if (prepared.size > MAX_ITEM_PHOTO_BYTES) {
+          rejection = 'That photo is too large to upload. Please choose a smaller image.';
+          continue;
+        }
+
+        accepted.push(prepared);
+      }
+    } finally {
+      setPhotoBusy(false);
+    }
+
+    if (accepted.length > 0) {
+      setNewPhotos((current) => [...current, ...accepted].slice(0, MAX_ITEM_PHOTOS));
+    }
+    setPhotoError(rejection);
+  };
+
+  const removeSavedPhoto = (url) => {
+    setSavedPhotos((current) => current.filter((item) => item !== url));
+    setPhotoError('');
+  };
+
+  const removeNewPhoto = (index) => {
+    setNewPhotos((current) => current.filter((_, position) => position !== index));
+    setPhotoError('');
+  };
+
+  const attachWarranty = async (file) => {
+    if (!file) {
+      setQuoteForm((current) => ({ ...current, warrantyFile: null }));
+      setWarrantyHint('');
+      return;
+    }
+
+    setWarrantyBusy(true);
+    setWarrantyHint('Optimizing file…');
+    try {
+      const prepared = file.type.startsWith('image/')
+        ? await compressImageFile(file)
+        : file;
+      setQuoteForm((current) => ({ ...current, warrantyFile: prepared }));
+      if (prepared.size < file.size) {
+        setWarrantyHint(`Reduced automatically from ${formatFileSize(file.size)} to ${formatFileSize(prepared.size)}.`);
+        return;
+      }
+      setWarrantyHint(prepared.size > 512 * 1024
+        ? 'Large file — it will be uploaded in smaller pieces so it stays under the server limit.'
+        : '');
+    } catch {
+      setQuoteForm((current) => ({ ...current, warrantyFile: file }));
+      setWarrantyHint('');
+    } finally {
+      setWarrantyBusy(false);
+    }
   };
 
   const handleQuoteSubmit = async (e) => {
     e.preventDefault();
     if (!selectedOpp && !editingQuote) return;
 
-      closeQuoteModal();
-      setActiveTab('my_quotes');
-      if (editingQuote) {
-        void updateSupplierQuotation(editingQuote.id, {
-          unitPrice: Number(quoteForm.unitPrice),
-          warrantyMonths: Number(quoteForm.warrantyMonths),
-          warranty: quoteForm.warranty,
-          warrantyFile: quoteForm.warrantyFile,
-          deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
-          paymentTerms: quoteForm.paymentTerms,
-          notes: quoteForm.notes,
-        });
-      } else {
-        void submitSupplierQuotation({
-          procurementId: selectedOpp.prNumber,
-          supplierId: user?.supplierId,
-          supplierName: user?.supplierName,
-          item: selectedOpp.itemName || selectedOpp.title,
-          quantity: selectedOpp.quantity,
-          unitPrice: Number(quoteForm.unitPrice),
-          totalPrice: Number(quoteForm.unitPrice) * selectedOpp.quantity,
-          warrantyMonths: Number(quoteForm.warrantyMonths),
-          warranty: quoteForm.warranty,
-          warrantyFile: quoteForm.warrantyFile,
-          deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
-          qualityRating: 4.8,
-          paymentTerms: quoteForm.paymentTerms,
-          notes: quoteForm.notes,
-        });
+      if (photoBusy || warrantyBusy) {
+        setPhotoError('Please wait until the selected files finish processing.');
+        return;
+      }
+
+      if (photoCount < 1) {
+        setPhotoError('Attach at least 1 photo of the actual item you are offering.');
+        return;
+      }
+
+      const photosToUpload = newPhotos;
+      const photosToKeep = savedPhotos;
+
+      const controller = new AbortController();
+      uploadAbortRef.current?.abort();
+      uploadAbortRef.current = controller;
+
+      try {
+        const result = editingQuote
+          ? await updateSupplierQuotation(editingQuote.id, {
+            unitPrice: Number(quoteForm.unitPrice),
+            warrantyMonths: Number(quoteForm.warrantyMonths),
+            warranty: quoteForm.warranty,
+            warrantyFile: quoteForm.warrantyFile,
+            itemPhotos: photosToUpload,
+            keepItemPhotos: photosToKeep,
+            deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
+            paymentTerms: quoteForm.paymentTerms,
+            notes: quoteForm.notes,
+          }, { signal: controller.signal })
+          : await submitSupplierQuotation({
+            procurementId: selectedOpp.prNumber,
+            supplierId: user?.supplierId,
+            supplierName: user?.supplierName,
+            item: selectedOpp.itemName || selectedOpp.title,
+            quantity: selectedOpp.quantity,
+            unitPrice: Number(quoteForm.unitPrice),
+            totalPrice: Number(quoteForm.unitPrice) * selectedOpp.quantity,
+            warrantyMonths: Number(quoteForm.warrantyMonths),
+            warranty: quoteForm.warranty,
+            warrantyFile: quoteForm.warrantyFile,
+            itemPhotos: photosToUpload,
+            deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
+            qualityRating: 4.8,
+            paymentTerms: quoteForm.paymentTerms,
+            notes: quoteForm.notes,
+          }, { signal: controller.signal });
+        if (controller.signal.aborted || !result) {
+          return;
+        }
+        uploadAbortRef.current = null;
+        closeQuoteModal();
+        setActiveTab('my_quotes');
+      } catch {
+        // Keep the modal open so the vendor can fix the attachment and retry.
       }
   };
 
@@ -236,7 +433,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                 <span className="kpi-title">My Submitted Quotes</span>
                 <div className="kpi-icon-box text-blue"><FileText className="w-5 h-5" /></div>
               </div>
-              <div className="kpi-value text-blue">{quotations.length}</div>
+              <div className="kpi-value text-blue">{savedQuotes.length}</div>
               <div className="kpi-footer">Active quotations</div>
             </button>
 
@@ -313,7 +510,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           <div className="panel-header">
             <span className="panel-title"><FileText className="w-5 h-5 text-blue" /> Submitted Quotations Log</span>
           </div>
-          {quotations.length === 0 ? (
+          {savedQuotes.length === 0 ? (
             <div className="empty-state">
               <p>You have not submitted any quotations yet.</p>
             </div>
@@ -325,6 +522,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                     <th>Quotation ID</th>
                     <th>Procurement Ref</th>
                     <th>Item</th>
+                    <th>Photos</th>
                     <th className="text-right">Total Price</th>
                     <th>Delivery</th>
                     <th>Status</th>
@@ -332,12 +530,23 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {quotations.map((q) => (
+                  {savedQuotes.map((q) => (
                     <tr key={q.id}>
                       <td className="font-mono text-xs text-blue font-bold">{q.id}</td>
                       <td className="font-mono text-xs text-secondary">{q.procurementId}</td>
                       <td>
                         <ItemIdentity src={q.imageUrl} name={q.item} extra={`x${q.quantity}`} />
+                      </td>
+                      <td>
+                        {q.itemPhotoUrls?.length ? (
+                          <div className="quote-photo-strip">
+                            {q.itemPhotoUrls.map((url) => (
+                              <ItemThumb key={url} src={url} alt={q.item} />
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="quote-photo-empty">None</span>
+                        )}
                       </td>
                       <td className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
                       <td className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
@@ -424,17 +633,19 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           size="md"
           title={editingQuote ? `Edit Quotation — ${editingQuote.id}` : `Submit RFQ Quotation — ${selectedOpp.id}`}
           subtitle={editingQuote
-            ? 'Update unit price, lead time, and warranty coverage before a supplier is selected.'
-            : 'Enter unit price, lead time, warranty months, and an optional warranty certificate.'}
+            ? 'Update pricing, lead time, warranty coverage, and item photos before a supplier is selected.'
+            : 'Enter unit price, lead time, warranty coverage, and 1 to 3 photos of the actual item.'}
           footer={(
             <>
               <button type="button" onClick={closeQuoteModal} className="btn btn-outline btn-sm">Cancel</button>
-              <button type="submit" className="btn btn-primary btn-sm">
-                {editingQuote ? 'Save Changes' : 'Submit Quotation'}
+              <button type="submit" className="btn btn-primary btn-sm" disabled={actionLoading || photoBusy || warrantyBusy}>
+                {actionLoading || warrantyBusy ? 'Uploading…' : (editingQuote ? 'Save Changes' : 'Submit Quotation')}
               </button>
             </>
           )}
         >
+          {actionError ? <p className="quote-photo-error">{actionError}</p> : null}
+
           <div className="modal-hero">
             <ItemThumb
               src={quoteTarget.imageUrl}
@@ -503,14 +714,32 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
             />
           </div>
 
+          <QuotePhotoPicker
+            savedPhotos={savedPhotos}
+            newPhotos={newPhotos}
+            error={photoError}
+            busy={photoBusy}
+            onAdd={addPhotos}
+            onRemoveSaved={removeSavedPhoto}
+            onRemoveNew={removeNewPhoto}
+          />
+
           <div className="form-group">
             <label className="form-label">Warranty certificate (PDF or image)</label>
             <input
               type="file"
               accept=".pdf,.jpg,.jpeg,.png,.webp"
               className="form-control"
-              onChange={(e) => setQuoteForm({ ...quoteForm, warrantyFile: e.target.files?.[0] || null })}
+              disabled={warrantyBusy || actionLoading}
+              onChange={(e) => {
+                attachWarranty(e.target.files?.[0] || null);
+                e.target.value = '';
+              }}
             />
+            <p className="item-photo-hint">
+              PDF or image. Oversized files are reduced automatically, or sent in smaller pieces if they still exceed the server limit.
+            </p>
+            {warrantyHint ? <p className="item-photo-hint">{warrantyHint}</p> : null}
             {editingQuote?.warrantyFileUrl && !quoteForm.warrantyFile && (
               <p className="text-xs text-slate-400 mt-1">A certificate is already on file. Choose a new file to replace it.</p>
             )}

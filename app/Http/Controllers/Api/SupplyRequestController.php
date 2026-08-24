@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ReleaseRequest;
+use App\Http\Resources\InventoryItemResource;
 use App\Http\Resources\ReleaseResource;
 use App\Http\Resources\SupplyRequestResource;
+use App\Models\InventoryItem;
 use App\Models\SupplyRequest;
 use App\Services\SupplyChainService;
 
@@ -29,7 +31,16 @@ class SupplyRequestController extends Controller
     {
         $releasedTo = $request->validated('releasedTo') ?: $supplyRequest->requested_by;
         $release = $service->releaseSupplyRequest($supplyRequest, (string) $releasedTo, $request->user());
+        $freshRequest = $supplyRequest->fresh(['logs', 'catalogItem', 'inventoryItem']);
+        $item = InventoryItem::query()
+            ->with(['supplier:id,company_name', 'storageLocation:id,rack,shelf,bin'])
+            ->where('item_code', $freshRequest?->item_code)
+            ->first();
 
-        return $this->ok(new ReleaseResource($release), 'Supply request released');
+        return $this->ok($this->withRecordedMovements([
+            ...(new ReleaseResource($release))->resolve(),
+            'updatedSupplyRequest' => $freshRequest ? (new SupplyRequestResource($freshRequest))->resolve() : null,
+            'updatedInventory' => $item ? [(new InventoryItemResource($item))->resolve()] : [],
+        ], $service), 'Supply request released');
     }
 }

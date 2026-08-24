@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Send, CheckCircle2 } from 'lucide-react';
 
 export const Releases = () => {
-  const { releases, supplyRequests, releaseSupplyRequest, searchQuery, setActiveModal, setModalData } = useApp();
+  const { releases, supplyRequests, releaseSupplyRequest, actionLoading, searchQuery, setActiveModal, setModalData } = useApp();
 
   const pendingReleases = supplyRequests.filter(r => r.status === 'Ready for Release');
 
@@ -77,6 +77,8 @@ export const Releases = () => {
                     <td><span className="badge badge-ready-for-release">Stock Reserved</span></td>
                     <td className="text-right">
                       <button
+                        type="button"
+                        disabled={actionLoading}
                         onClick={() => releaseSupplyRequest(r.id, r.requestedBy)}
                         className="btn btn-success btn-sm"
                       >

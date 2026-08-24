@@ -420,6 +420,19 @@ body {
   object-fit: cover;
 }
 
+.item-thumb-fallback {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: #94A3B8;
+  pointer-events: none;
+}
+
+.item-thumb.is-loading,
+.item-thumb.is-ready {
+  position: relative;
+}
+
 .item-thumb.is-clickable {
   cursor: zoom-in;
 }
@@ -771,6 +784,113 @@ body {
 
 .item-photo-input {
   display: none;
+}
+
+.quote-photo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.quote-photo-tile {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #E2E8F0;
+  background: #F8FAFC;
+  flex-shrink: 0;
+}
+
+.quote-photo-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.quote-photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #FFFFFF;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.quote-photo-remove:hover {
+  background: #B91C1C;
+}
+
+.quote-photo-add {
+  width: 88px;
+  height: 88px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: 1px dashed #CBD5E1;
+  border-radius: 12px;
+  background: #F8FAFC;
+  color: #64748B;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quote-photo-add:hover {
+  border-color: #93C5FD;
+  color: #1D4ED8;
+}
+
+.quote-photo-add:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.quote-photo-error {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #B91C1C !important;
+}
+
+.quote-photo-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.quote-photo-empty {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #94A3B8 !important;
+}
+
+.modal-quote-photos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.modal-quote-photos-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748B !important;
 }
 
 .document-file-row {

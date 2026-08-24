@@ -12,18 +12,22 @@ class PurchaseOrderResource extends JsonResource
     {
         return [
             'poNumber' => $this->po_number,
-            'procurementId' => $this->procurementRequest?->pr_number,
-            'supplierId' => $this->supplierAccount?->code,
+            'procurementId' => $this->relationLoaded('procurementRequest') ? $this->procurementRequest?->pr_number : null,
+            'supplierId' => $this->relationLoaded('supplierAccount') ? $this->supplierAccount?->code : null,
             'supplier' => $this->supplier,
             'contactPerson' => $this->contact_person,
-            'items' => $this->when($this->relationLoaded('items'), fn () => $this->items->map(fn ($item) => [
-                'itemCode' => $item->item_code,
-                'description' => $item->description,
-                'quantity' => $item->quantity,
-                'unitPrice' => (float) $item->unit_price,
-                'total' => (float) $item->total,
-                'deliveredQty' => $item->delivered_qty,
-            ])->values()),
+            'items' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->map(fn ($item) => [
+                    'itemCode' => $item->item_code,
+                    'description' => $item->description,
+                    'quantity' => $item->quantity,
+                    'unitPrice' => (float) $item->unit_price,
+                    'total' => (float) $item->total,
+                    'deliveredQty' => $item->delivered_qty,
+                ])->values(),
+                []
+            ),
             'totalCost' => (float) $this->total_cost,
             'budgetReference' => $this->budget_reference,
             'paymentTerms' => $this->payment_terms,

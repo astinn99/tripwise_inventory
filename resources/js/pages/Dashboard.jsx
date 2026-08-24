@@ -49,7 +49,11 @@ export const Dashboard = () => {
   const totalPOs = purchaseOrders.length;
   const pendingFinanceApprovals = purchaseOrders.filter(p => p.poStatus === 'Pending Finance Approval').length;
   const pendingDeliveries = deliveries.filter(d => d.status === 'Expected' || d.status === 'In Transit').length;
-  const awaitingInspection = deliveries.filter(d => d.status === 'Under Inspection').length;
+  const awaitingInspection = deliveries.filter(d =>
+    d.status === 'Under Inspection'
+    || d.status === 'In Transit'
+    || String(d.inspectionResult || 'Pending') === 'Pending'
+  ).length;
 
   const recentlyReceived = movements.filter(m => m.movementType === 'Receiving').slice(0, 5);
   const recentlyReleased = movements.filter(m => m.movementType === 'Releasing').slice(0, 5);

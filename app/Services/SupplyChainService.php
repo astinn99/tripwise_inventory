@@ -2,11 +2,15 @@
 
 namespace App\Services;
 
+use App\Events\DeliveryUpdated;
+use App\Events\InventoryMovementCreated;
 use App\Events\OpportunityPublished;
 use App\Events\PurchaseOrderUpdated;
 use App\Events\QuotationSubmitted;
 use App\Events\StockStatusChanged;
+use App\Http\Resources\DeliveryResource;
 use App\Http\Resources\InventoryItemResource;
+use App\Http\Resources\InventoryMovementResource;
 use App\Http\Resources\PurchaseOrderResource;
 use App\Http\Resources\QuotationResource;
 use App\Models\Delivery;
@@ -23,6 +27,7 @@ use App\Models\Supplier;
 use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
+use App\Support\Base64Upload;
 use App\Support\DocumentCode;
 use App\Support\SafeBroadcast;
 use App\Support\WarrantyDuration;
@@ -33,7 +38,21 @@ use Illuminate\Validation\ValidationException;
 
 class SupplyChainService
 {
+    private const MAX_QUOTATION_ITEM_PHOTOS = 3;
+
+    /** @var list<InventoryMovement> */
+    private array $recordedMovements = [];
+
     public function __construct(private NotificationService $notifications) {}
+
+    public function recordedMovementPayload(): array
+    {
+        if ($this->recordedMovements === []) {
+            return [];
+        }
+
+        return InventoryMovementResource::collection($this->recordedMovements)->resolve();
+    }
 
     public function receiveDepartmentSupplyRequest(array $data): SupplyRequest
     {
@@ -273,10 +292,10 @@ class SupplyChainService
         ]);
         $po->update(['po_status' => 'Confirmed']);
         $po->loadMissing('items');
-        $this->createInboundDeliveryFromPO($po);
+        $delivery = $this->createInboundDeliveryFromPO($po);
 
         $poNumber = $po->po_number;
-        dispatch(function () use ($po, $poNumber): void {
+        dispatch(function () use ($po, $poNumber, $delivery): void {
             $this->notifications->create(
                 'Supplier Confirmed PO',
                 "Supplier has confirmed PO {$poNumber}. Inbound delivery created for Receiving and Inspection.",
@@ -284,6 +303,7 @@ class SupplyChainService
                 'success'
             );
             $this->broadcastPO($po);
+            $this->broadcastDelivery($delivery);
         })->afterResponse();
 
         return $po;
@@ -392,8 +412,7 @@ class SupplyChainService
                     $this->broadcastStock($item);
                 }
 
-                InventoryMovement::query()->create([
-                    'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+                $this->recordMovement([
                     'inventory_item_id' => $item?->id,
                     'item_code' => $line['itemCode'],
                     'item_name' => $line['description'] ?? $line['itemCode'],
@@ -434,44 +453,66 @@ class SupplyChainService
                 $this->broadcastPO($po->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']));
             }
 
+            $fresh = $delivery->fresh(['items', 'purchaseOrder']);
             $this->notifications->create(
                 "Delivery Inspection Completed ({$inspectionResult})",
                 "Delivery {$delivery->delivery_number} inspected. ".($inspectionResult === 'Passed' ? 'Stock updated in inventory.' : 'Partial/Failed inspection logged.'),
                 'delivery',
                 $inspectionResult === 'Passed' ? 'success' : 'warning'
             );
+            $this->broadcastDelivery($fresh);
+            $this->broadcastRecordedMovements();
 
-            return $delivery->fresh(['items', 'purchaseOrder']);
+            return $fresh;
         });
     }
 
     public function releaseSupplyRequest(SupplyRequest $request, string $releasedTo, User $actor): Release
     {
         return DB::transaction(function () use ($request, $releasedTo, $actor) {
+            $locked = SupplyRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->status === 'Released') {
+                $existing = Release::query()
+                    ->where('supply_request_id', $locked->id)
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($existing) {
+                    return $existing;
+                }
+            }
+
+            if ($locked->status !== 'Ready for Release') {
+                throw ValidationException::withMessages([
+                    'supplyRequest' => ['This request is not ready for dispatch.'],
+                ]);
+            }
+
             $timestamp = now()->format('Y-m-d H:i');
             $releaseNumber = DocumentCode::next('releases', 'release_number', 'REL');
 
-            $item = InventoryItem::query()->where('item_code', $request->item_code)->first();
+            $item = InventoryItem::query()->where('item_code', $locked->item_code)->lockForUpdate()->first();
             if ($item) {
-                $item->quantity = max(0, $item->quantity - $request->quantity_requested);
+                $item->quantity = max(0, $item->quantity - $locked->quantity_requested);
                 $item->save();
                 $this->broadcastStock($item);
             }
 
-            $request->update(['status' => 'Released']);
-            $request->logs()->create([
+            $locked->update(['status' => 'Released']);
+            $locked->logs()->create([
                 'logged_at' => $timestamp,
                 'note' => "Item released to {$releasedTo}. Release ID: {$releaseNumber}",
             ]);
 
             $release = Release::query()->create([
                 'release_number' => $releaseNumber,
-                'supply_request_id' => $request->id,
-                'request_id' => $request->request_number,
-                'requesting_department' => $request->requesting_department,
-                'item_code' => $request->item_code,
-                'item_name' => $request->item_name,
-                'quantity_released' => $request->quantity_requested,
+                'supply_request_id' => $locked->id,
+                'request_id' => $locked->request_number,
+                'requesting_department' => $locked->requesting_department,
+                'item_code' => $locked->item_code,
+                'item_name' => $locked->item_name,
+                'quantity_released' => $locked->quantity_requested,
                 'approval_status' => 'Approved by Dept & Stock Verified',
                 'stock_status' => 'Deducted from Inventory',
                 'release_date' => $timestamp,
@@ -479,28 +520,28 @@ class SupplyChainService
                 'dispatched_by' => $actor->name,
             ]);
 
-            InventoryMovement::query()->create([
-                'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+            $this->recordMovement([
                 'inventory_item_id' => $item?->id,
-                'item_code' => $request->item_code,
-                'item_name' => $request->item_name,
+                'item_code' => $locked->item_code,
+                'item_name' => $locked->item_name,
                 'movement_type' => 'Releasing',
-                'quantity' => $request->quantity_requested,
+                'quantity' => $locked->quantity_requested,
                 'moved_at' => $timestamp,
                 'location' => 'Dispatch Area',
-                'reference' => "{$releaseNumber} / {$request->request_number}",
-                'remarks' => "Issued to {$request->requesting_department} rep: {$releasedTo}",
+                'reference' => "{$releaseNumber} / {$locked->request_number}",
+                'remarks' => "Issued to {$locked->requesting_department} rep: {$releasedTo}",
                 'recorded_by' => $actor->name,
             ]);
 
             $this->notifications->create(
                 'Stock Released to Department',
-                "Supply Request {$request->request_number} ({$request->item_name} x{$request->quantity_requested}) has been released and deducted from stock.",
+                "Supply Request {$locked->request_number} ({$locked->item_name} x{$locked->quantity_requested}) has been released and deducted from stock.",
                 'stock',
                 'success'
             );
+            $this->broadcastRecordedMovements();
 
-            return $release;
+            return $release->fresh();
         });
     }
 
@@ -596,8 +637,7 @@ class SupplyChainService
 
             $locked->save();
 
-            InventoryMovement::query()->create([
-                'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+            $this->recordMovement([
                 'inventory_item_id' => $locked->id,
                 'item_code' => $locked->item_code,
                 'item_name' => $locked->description,
@@ -612,6 +652,7 @@ class SupplyChainService
 
             $this->notifications->create($title, $body, 'stock', $tone);
             $this->broadcastStock($locked);
+            $this->broadcastRecordedMovements();
 
             return $locked->fresh(['supplier', 'storageLocation']);
         });
@@ -693,7 +734,7 @@ class SupplyChainService
         $path = $image->storeAs('inventory-items', $item->code.'.'.$extension, 'public');
 
         if ($oldPath && $oldPath !== $path) {
-            $this->deleteStoredInventoryImage($oldPath);
+            $this->deletePublicFile($oldPath);
         }
 
         $item->forceFill(['image_path' => $path])->save();
@@ -701,11 +742,11 @@ class SupplyChainService
 
     private function deleteInventoryItemImage(InventoryItem $item): void
     {
-        $this->deleteStoredInventoryImage($item->image_path);
+        $this->deletePublicFile($item->image_path);
         $item->forceFill(['image_path' => null])->save();
     }
 
-    private function deleteStoredInventoryImage(?string $path): void
+    private function deletePublicFile(?string $path): void
     {
         if ($path && Storage::disk('public')->exists($path)) {
             Storage::disk('public')->delete($path);
@@ -779,8 +820,7 @@ class SupplyChainService
         $to = $item->locationLabel();
         $timestamp = now()->format('Y-m-d H:i');
 
-        InventoryMovement::query()->create([
-            'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+        $this->recordMovement([
             'inventory_item_id' => $item->id,
             'item_code' => $item->item_code,
             'item_name' => $item->description,
@@ -801,6 +841,7 @@ class SupplyChainService
         );
 
         $this->broadcastStock($item);
+        $this->broadcastRecordedMovements();
 
         return $item;
     }
@@ -865,8 +906,7 @@ class SupplyChainService
                     $this->broadcastStock($item);
                 }
 
-                InventoryMovement::query()->create([
-                    'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+                $this->recordMovement([
                     'inventory_item_id' => $item?->id,
                     'item_code' => $line['itemCode'],
                     'item_name' => $line['itemName'] ?? $line['itemCode'],
@@ -892,6 +932,7 @@ class SupplyChainService
                 'stock',
                 $discrepancyCount > 0 ? 'warning' : 'success'
             );
+            $this->broadcastRecordedMovements();
 
             return $count->fresh(['items']);
         });
@@ -956,7 +997,29 @@ class SupplyChainService
         }
 
         $warrantyFile = $data['warrantyFile'] ?? null;
-        unset($data['warrantyFile']);
+        $warrantyFileBase64 = $data['warrantyFileBase64'] ?? null;
+        $warrantyFileName = $data['warrantyFileName'] ?? null;
+        $itemPhotos = $this->uploadedPhotos($data['itemPhotos'] ?? null);
+        if ($itemPhotos === [] && ! empty($data['itemPhotoTokens'])) {
+            $itemPhotos = app(QuotationUploadService::class)->photosFromTokens($data['itemPhotoTokens'], $actor);
+        }
+        if (! $warrantyFile instanceof UploadedFile && ! empty($data['warrantyToken'])) {
+            $warrantyFile = app(QuotationUploadService::class)->toUploadedFile($data['warrantyToken'], $actor, 'warrantyFile');
+        }
+        unset(
+            $data['warrantyFile'],
+            $data['warrantyFileBase64'],
+            $data['warrantyFileName'],
+            $data['itemPhotos'],
+            $data['itemPhotosBase64'],
+            $data['itemPhotoNames'],
+            $data['itemPhotoTokens'],
+            $data['warrantyToken']
+        );
+
+        if (! $warrantyFile instanceof UploadedFile) {
+            $warrantyFile = $this->uploadedFileFromBase64($warrantyFileBase64, $warrantyFileName);
+        }
 
         $quote = Quotation::query()->create([
             'quote_number' => DocumentCode::next('quotations', 'quote_number', 'QT'),
@@ -980,6 +1043,8 @@ class SupplyChainService
             $this->storeWarrantyFile($quote, $warrantyFile);
         }
 
+        $this->syncQuotationItemPhotos($quote, $itemPhotos, []);
+
         $pr->update(['status' => 'Evaluation']);
 
         if ($supplier) {
@@ -989,17 +1054,21 @@ class SupplyChainService
                 ->update(['status' => 'Quoted']);
         }
 
-        $this->notifications->create(
-            'New Quotation Received from Supplier',
-            "{$quote->supplier_name} submitted a quotation (₱".number_format($quote->total_price, 2).") for {$quote->item}.",
-            'procurement',
-            'success'
-        );
+        try {
+            $this->notifications->create(
+                'New Quotation Received from Supplier',
+                "{$quote->supplier_name} submitted a quotation (₱".number_format($quote->total_price, 2).") for {$quote->item}.",
+                'procurement',
+                'success'
+            );
+        } catch (\Throwable) {
+            // The quotation is already saved; a notification collision must not fail submit.
+        }
 
         $resource = (new QuotationResource($quote->load(['procurementRequest.catalogItem', 'supplier'])))->resolve();
         $this->broadcastSafely(new QuotationSubmitted($resource));
 
-        return $quote->fresh(['procurementRequest', 'supplier']);
+        return $quote->fresh(['procurementRequest.catalogItem', 'supplier']);
     }
 
     public function updateSupplierQuotation(Quotation $quote, array $data, User $actor): Quotation
@@ -1019,7 +1088,35 @@ class SupplyChainService
         }
 
         $warrantyFile = $data['warrantyFile'] ?? null;
-        unset($data['warrantyFile']);
+        $warrantyFileBase64 = $data['warrantyFileBase64'] ?? null;
+        $warrantyFileName = $data['warrantyFileName'] ?? null;
+        $itemPhotos = $this->uploadedPhotos($data['itemPhotos'] ?? null);
+        if ($itemPhotos === [] && ! empty($data['itemPhotoTokens'])) {
+            $itemPhotos = app(QuotationUploadService::class)->photosFromTokens($data['itemPhotoTokens'], $actor);
+        }
+        if (! $warrantyFile instanceof UploadedFile && ! empty($data['warrantyToken'])) {
+            $warrantyFile = app(QuotationUploadService::class)->toUploadedFile($data['warrantyToken'], $actor, 'warrantyFile');
+        }
+        $keepItemPhotos = array_key_exists('keepItemPhotos', $data) && is_array($data['keepItemPhotos'])
+            ? $data['keepItemPhotos']
+            : null;
+        unset(
+            $data['warrantyFile'],
+            $data['warrantyFileBase64'],
+            $data['warrantyFileName'],
+            $data['itemPhotos'],
+            $data['itemPhotosBase64'],
+            $data['itemPhotoNames'],
+            $data['itemPhotoTokens'],
+            $data['warrantyToken'],
+            $data['keepItemPhotos']
+        );
+
+        if (! $warrantyFile instanceof UploadedFile) {
+            $warrantyFile = $this->uploadedFileFromBase64($warrantyFileBase64, $warrantyFileName);
+        }
+
+        $this->syncQuotationItemPhotos($quote, $itemPhotos, $keepItemPhotos);
 
         $unitPrice = (float) $data['unitPrice'];
         $quote->update([
@@ -1041,12 +1138,16 @@ class SupplyChainService
 
         $quote = $quote->fresh(['procurementRequest.catalogItem', 'supplier']);
 
-        $this->notifications->create(
-            'Quotation Updated',
-            "{$quote->supplier_name} updated their quotation (₱".number_format($quote->total_price, 2).") for {$quote->item}.",
-            'procurement',
-            'info'
-        );
+        try {
+            $this->notifications->create(
+                'Quotation Updated',
+                "{$quote->supplier_name} updated their quotation (₱".number_format($quote->total_price, 2).") for {$quote->item}.",
+                'procurement',
+                'info'
+            );
+        } catch (\Throwable) {
+            // Keep the saved quotation even if notification numbering collides.
+        }
 
         $this->broadcastSafely(new QuotationSubmitted(
             (new QuotationResource($quote))->resolve()
@@ -1097,32 +1198,34 @@ class SupplyChainService
 
     public function sendProcurementToVendors(ProcurementRequest $pr): int
     {
-        $item = InventoryItem::query()->where('item_code', $pr->item_code)->first();
-        $category = $item?->category;
-        $invited = $this->publishOpportunities($pr, $category);
+        return DB::transaction(function () use ($pr) {
+            $item = InventoryItem::query()->where('item_code', $pr->item_code)->first();
+            $category = $item?->category;
+            $invited = $this->publishOpportunities($pr, $category);
 
-        if (in_array($pr->status, ['For Procurement', 'Quotation'], true)) {
-            $pr->update(['status' => 'Quotation']);
-        }
+            if (in_array($pr->status, ['For Procurement', 'Quotation'], true)) {
+                $pr->update(['status' => 'Quotation']);
+            }
 
-        if ($invited > 0) {
-            $this->notifications->create(
-                'RFQ Sent to Vendor Portals',
-                "Procurement {$pr->pr_number} — {$pr->item_name} ({$pr->item_code}) x{$pr->quantity} — was sent to {$invited} vendor portal(s) for quotation.",
-                'procurement',
-                'success'
-            );
+            if ($invited > 0) {
+                $this->notifications->create(
+                    'RFQ Sent to Vendor Portals',
+                    "Procurement {$pr->pr_number} — {$pr->item_name} ({$pr->item_code}) x{$pr->quantity} — was sent to {$invited} vendor portal(s) for quotation.",
+                    'procurement',
+                    'success'
+                );
 
-            $this->broadcastSafely(new OpportunityPublished([
-                'prNumber' => $pr->pr_number,
-                'itemName' => $pr->item_name,
-                'itemCode' => $pr->item_code,
-                'quantity' => $pr->quantity,
-                'vendorCount' => $invited,
-            ]));
-        }
+                $this->broadcastSafely(new OpportunityPublished([
+                    'prNumber' => $pr->pr_number,
+                    'itemName' => $pr->item_name,
+                    'itemCode' => $pr->item_code,
+                    'quantity' => $pr->quantity,
+                    'vendorCount' => $invited,
+                ]));
+            }
 
-        return $invited;
+            return $invited;
+        });
     }
 
     private function publishOpportunities(ProcurementRequest $pr, ?string $category): int
@@ -1286,6 +1389,33 @@ class SupplyChainService
         ));
     }
 
+    private function broadcastDelivery(Delivery $delivery): void
+    {
+        $this->broadcastSafely(new DeliveryUpdated(
+            (new DeliveryResource($delivery->loadMissing('items')))->resolve()
+        ));
+    }
+
+    private function recordMovement(array $attributes): InventoryMovement
+    {
+        $movement = InventoryMovement::query()->create([
+            'movement_number' => DocumentCode::next('inventory_movements', 'movement_number', 'MOV'),
+            ...$attributes,
+        ]);
+        $this->recordedMovements[] = $movement;
+
+        return $movement;
+    }
+
+    private function broadcastRecordedMovements(): void
+    {
+        if ($this->recordedMovements === []) {
+            return;
+        }
+
+        $this->broadcastSafely(new InventoryMovementCreated($this->recordedMovementPayload()));
+    }
+
     private function broadcastSafely(object $event): void
     {
         SafeBroadcast::later($event);
@@ -1424,6 +1554,19 @@ class SupplyChainService
         ]);
     }
 
+    private function uploadedFileFromBase64(mixed $base64, mixed $filename): ?UploadedFile
+    {
+        return Base64Upload::file(
+            $base64,
+            $filename,
+            'warrantyFile',
+            10 * 1024 * 1024,
+            ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
+            'pdf',
+            'warranty_'
+        );
+    }
+
     private function storeWarrantyFile(Quotation $quote, UploadedFile $file): void
     {
         $oldPath = $quote->warranty_file_path;
@@ -1434,6 +1577,110 @@ class SupplyChainService
         }
 
         $quote->forceFill(['warranty_file_path' => $path])->save();
+    }
+
+    /**
+     * @param  mixed  $photos
+     * @return list<UploadedFile>
+     */
+    private function uploadedPhotos(mixed $photos): array
+    {
+        if (! is_array($photos)) {
+            return [];
+        }
+
+        return array_values(array_filter($photos, fn ($photo) => $photo instanceof UploadedFile));
+    }
+
+    /**
+     * Reconciles the vendor photo set: keeps the requested existing photos, adds the new
+     * uploads, and removes any file that is no longer referenced.
+     *
+     * @param  list<UploadedFile>  $newPhotos
+     * @param  list<string>|null  $keepPaths  Null keeps every photo already on file.
+     */
+    private function syncQuotationItemPhotos(Quotation $quote, array $newPhotos, ?array $keepPaths): void
+    {
+        $existing = $quote->itemPhotoPaths();
+
+        $kept = $keepPaths === null
+            ? $existing
+            : array_values(array_intersect($existing, $this->normalizeItemPhotoPaths($keepPaths)));
+
+        $total = count($kept) + count($newPhotos);
+
+        if ($total < 1) {
+            throw ValidationException::withMessages([
+                'itemPhotos' => ['Attach 1 to 3 photos of the actual item you are offering.'],
+            ]);
+        }
+
+        if ($total > self::MAX_QUOTATION_ITEM_PHOTOS) {
+            throw ValidationException::withMessages([
+                'itemPhotos' => ['You can attach a maximum of '.self::MAX_QUOTATION_ITEM_PHOTOS.' item photos.'],
+            ]);
+        }
+
+        $paths = $kept;
+        foreach ($newPhotos as $photo) {
+            $paths[] = $this->storeQuotationItemPhoto($quote, $photo, $paths);
+        }
+
+        foreach (array_diff($existing, $paths) as $orphan) {
+            $this->deletePublicFile($orphan);
+        }
+
+        $quote->forceFill(['item_photo_paths' => array_values($paths)])->save();
+    }
+
+    /**
+     * @param  list<string>  $usedPaths  Paths already taken by this quotation.
+     */
+    private function storeQuotationItemPhoto(Quotation $quote, UploadedFile $photo, array $usedPaths): string
+    {
+        $extension = strtolower($photo->guessExtension() ?: $photo->getClientOriginalExtension() ?: 'jpg');
+        if (! in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+            $extension = 'jpg';
+        }
+
+        $usedSlots = [];
+        foreach ($usedPaths as $path) {
+            if (preg_match('/-(\d+)\.[A-Za-z0-9]+$/', basename($path), $matches)) {
+                $usedSlots[] = (int) $matches[1];
+            }
+        }
+
+        $slot = 1;
+        while (in_array($slot, $usedSlots, true)) {
+            $slot++;
+        }
+
+        return $photo->storeAs(
+            'quotation-item-photos',
+            $quote->quote_number.'-'.$slot.'.'.$extension,
+            'public'
+        );
+    }
+
+    /**
+     * Accepts either stored paths or the `/storage/...` URLs echoed back by the client.
+     *
+     * @param  list<mixed>  $paths
+     * @return list<string>
+     */
+    private function normalizeItemPhotoPaths(array $paths): array
+    {
+        $normalized = [];
+
+        foreach ($paths as $path) {
+            if (! is_string($path) || trim($path) === '') {
+                continue;
+            }
+
+            $normalized[] = ltrim(preg_replace('#^/?storage/#', '', trim($path)) ?? '', '/');
+        }
+
+        return array_values(array_unique($normalized));
     }
 
     private function storePublicUpload(UploadedFile $file, string $directory, string $basename): string

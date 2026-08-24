@@ -38,6 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/live', LiveSyncController::class);
 
     Route::get('/quotations', [QuotationController::class, 'index']);
+    Route::match(['get', 'post'], '/quotation-uploads', [QuotationController::class, 'upload']);
     Route::post('/quotations', [QuotationController::class, 'store']);
     Route::match(['put', 'post'], '/quotations/{quotation}', [QuotationController::class, 'update']);
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);

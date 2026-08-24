@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\SupplyChainService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\JsonResource;
 
 abstract class Controller
 {
@@ -13,6 +15,17 @@ abstract class Controller
             'message' => $message,
             'data' => $data,
         ], $status);
+    }
+
+    protected function withRecordedMovements(mixed $resource, SupplyChainService $service): array
+    {
+        $payload = $resource instanceof JsonResource ? $resource->resolve() : (array) $resource;
+        $movements = $service->recordedMovementPayload();
+        if ($movements !== []) {
+            $payload['createdMovements'] = $movements;
+        }
+
+        return $payload;
     }
 
     protected function created(mixed $data = [], string $message = 'Resource created'): JsonResponse
