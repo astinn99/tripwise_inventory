@@ -26,9 +26,19 @@ class Supplier extends Model
         ];
     }
 
+    public function getRouteKeyName(): string
+    {
+        return 'code';
+    }
+
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(Document::class);
     }
 
     public function inventoryItems(): HasMany

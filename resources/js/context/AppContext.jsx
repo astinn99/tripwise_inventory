@@ -313,6 +313,9 @@ const detectCollection = (record) => {
     if (record.movementType) {
         return 'movements';
     }
+    if (record.companyName !== undefined && record.contactPerson !== undefined && record.taxId !== undefined) {
+        return 'suppliers';
+    }
     if (record.daysRemaining !== undefined || record.expirationDate !== undefined) {
         return 'documents';
     }
@@ -1521,6 +1524,27 @@ export const AppProvider = ({ children }) => {
             }),
         });
 
+    const approveSupplier = (supplierId) =>
+        runAction(() => api.post(`/api/suppliers/${supplierId}/approve`), {
+            optimistic: (prev) => ({
+                ...prev,
+                suppliers: prev.suppliers.map((item) => (
+                    item.id === supplierId ? { ...item, status: 'Active' } : item
+                )),
+            }),
+            onSuccess: (supplier) => {
+                if (!supplier?.id) {
+                    return;
+                }
+                commitCollections((prev) => ({
+                    ...prev,
+                    suppliers: prev.suppliers.map((item) => (
+                        item.id === supplier.id ? { ...item, ...supplier } : item
+                    )),
+                }));
+            },
+        });
+
     const openTab = (tab) => {
         setActiveTab(tab);
         if (MORE_TABS.has(tab)) {
@@ -1568,6 +1592,7 @@ export const AppProvider = ({ children }) => {
             createManualProcurementRequest,
             updateProcurementRequest,
             sendProcurementToVendors,
+            approveSupplier,
         }}>
             {children}
         </AppContext.Provider>

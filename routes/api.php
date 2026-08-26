@@ -20,9 +20,11 @@ use App\Http\Controllers\Api\StorageLocationController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\SupplyRequestController;
 use App\Http\Controllers\Api\DepartmentSupplyApiController;
+use App\Http\Controllers\Api\VendorRegistrationController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/vendor/register', [VendorRegistrationController::class, 'store'])->middleware('throttle:6,1');
 
 Route::middleware('department')->prefix('department')->group(function () {
     Route::get('/items', [DepartmentSupplyApiController::class, 'items']);
@@ -44,6 +46,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::post('/purchase-orders/{purchaseOrder}/confirm', [PurchaseOrderController::class, 'confirm']);
     Route::get('/opportunities', [OpportunityController::class, 'index']);
+    Route::get('/vendor/profile', [VendorRegistrationController::class, 'profile']);
+    Route::get('/documents/{document}/download', [DocumentController::class, 'download']);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
@@ -72,6 +76,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/purchase-orders/{purchaseOrder}/finance-decision', [PurchaseOrderController::class, 'financeDecision']);
 
         Route::get('/suppliers', [SupplierController::class, 'index']);
+        Route::get('/suppliers/{supplier}', [SupplierController::class, 'show']);
+        Route::post('/suppliers/{supplier}/approve', [SupplierController::class, 'approve']);
         Route::get('/deliveries', [DeliveryController::class, 'index']);
         Route::post('/deliveries/{delivery}/inspect', [DeliveryController::class, 'inspect']);
         Route::get('/releases', [ReleaseController::class, 'index']);
@@ -83,7 +89,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/documents', [DocumentController::class, 'index']);
         Route::post('/documents', [DocumentController::class, 'store']);
-        Route::get('/documents/{document}/download', [DocumentController::class, 'download']);
 
         Route::get('/dashboard', DashboardController::class);
         Route::get('/reports', ReportController::class);

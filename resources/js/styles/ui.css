@@ -244,18 +244,87 @@
   margin-top: 0.25rem;
 }
 
-.login-switch {
-  margin-top: 1.15rem;
-  text-align: center;
-  font-size: 0.8rem;
-}
-
 .login-error {
   background: var(--bg-danger-light);
   border: 1px solid var(--border-danger);
   border-radius: 8px;
   padding: 0.7rem 0.85rem;
   margin-bottom: 1rem;
+}
+
+.login-success {
+  background: var(--bg-success-light);
+  border: 1px solid var(--border-success);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.login-footer {
+  margin-top: 1.15rem;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.login-text-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: #2563EB;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.login-screen-register {
+  align-items: flex-start;
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+
+.login-card-register {
+  max-width: 760px;
+}
+
+.login-section {
+  margin-top: 0.35rem;
+  padding-top: 1.05rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.login-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.login-section-title {
+  margin-bottom: 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748B;
+}
+
+.login-check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.35rem;
+}
+
+.login-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.login-card-register .btn-primary {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 1rem;
 }
 
 .login-screen.login-screen-inventory {
@@ -378,11 +447,6 @@
 
 .login-screen-inventory .login-card .btn-primary {
   min-height: 38px;
-}
-
-.login-screen-inventory .login-switch {
-  margin-top: 0.9rem;
-  font-size: 0.75rem;
 }
 
 @media (max-width: 960px) {

@@ -11,9 +11,13 @@ import {
   Inbox,
   ImagePlus,
   MessageSquare,
+  Phone,
+  Mail,
   X,
 } from 'lucide-react';
-import { Modal } from '../components/ui/Modal';
+import { Modal, displayValue } from '../components/ui/Modal';
+import { api } from '../services/api';
+import { CredentialFiles } from '../components/ui/CredentialFiles';
 import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
 import { compressImageFile, formatFileSize } from '../services/images';
 
@@ -27,7 +31,7 @@ const TAB_COPY = {
   my_quotes: 'Track quotations you have submitted and edit them until a supplier is selected.',
   purchase_orders: 'Confirm awarded purchase orders and schedule shipment.',
   messages: 'Message threads with the TripWise supply chain team will appear here.',
-  profile: 'Company profile and portal account details will appear here.',
+  profile: 'Review the company, legal, contact, and banking details submitted for your vendor account.',
 };
 
 const quoteBadgeClass = (status) => {
@@ -221,8 +225,30 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [warrantyBusy, setWarrantyBusy] = useState(false);
   const [warrantyHint, setWarrantyHint] = useState('');
+  const [vendorProfile, setVendorProfile] = useState(null);
 
   const awaitingConfirm = purchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier');
+  const pendingApproval = (vendorProfile?.status || user?.supplierStatus) === 'Pending Approval';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api.get('/api/vendor/profile', { portal: 'vendor' })
+      .then((profile) => {
+        if (!cancelled) {
+          setVendorProfile(profile);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setVendorProfile(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const resetPhotos = (urls = []) => {
     setSavedPhotos(urls);
@@ -415,6 +441,16 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           <p className="page-description">{TAB_COPY[activeTab] || TAB_COPY.dashboard}</p>
         </div>
       </div>
+
+      {pendingApproval ? (
+        <div className="vendor-alert-banner is-pending">
+          <Clock className="w-5 h-5" />
+          <div>
+            <strong>Pending supply chain review</strong>
+            <p>Your credentials are under review. RFQs will appear here after approval.</p>
+          </div>
+        </div>
+      ) : null}
 
       {activeTab === 'dashboard' && (
         <div>
@@ -762,12 +798,69 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
         </Modal>
       )}
 
-      {(activeTab === 'messages' || activeTab === 'profile') && (
+      {activeTab === 'profile' && (
+        <div className="panel-card">
+          {vendorProfile ? (
+            <div className="vendor-profile">
+              <div className="modal-hero">
+                <div className="flex items-start gap-3">
+                  <span className="modal-avatar">
+                    {(vendorProfile.companyName || 'V').slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="modal-hero-main">
+                    <div className="modal-kicker">{vendorProfile.id}</div>
+                    <h4>{vendorProfile.companyName}</h4>
+                    <div className="modal-hero-meta">{displayValue(vendorProfile.address)}</div>
+                    <div className="modal-chip-row">
+                      <span className="modal-chip"><Phone className="w-3.5 h-3.5" /> {displayValue(vendorProfile.phone)}</span>
+                      <span className="modal-chip"><Mail className="w-3.5 h-3.5" /> {displayValue(vendorProfile.email)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-hero-aside">
+                  <span className="modal-stat-label">Account status</span>
+                  <span className={`badge ${vendorProfile.status === 'Active' ? 'badge-active' : 'badge-pending'}`}>
+                    {vendorProfile.status}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="modal-panel">
+                  <div className="modal-section-title">Legal registrations</div>
+                  <div className="modal-dl">
+                    <div className="modal-dl-row"><span>TIN</span><strong>{displayValue(vendorProfile.taxId)}</strong></div>
+                    <div className="modal-dl-row"><span>SEC / DTI #</span><strong>{displayValue(vendorProfile.secRegistration)}</strong></div>
+                    <div className="modal-dl-row"><span>Categories</span><strong>{(vendorProfile.categories || []).join(', ') || '—'}</strong></div>
+                  </div>
+                </div>
+                <div className="modal-panel">
+                  <div className="modal-section-title">Contacts & bank</div>
+                  <div className="modal-dl">
+                    <div className="modal-dl-row"><span>Contact person</span><strong>{displayValue(vendorProfile.contactPerson)}</strong></div>
+                    <div className="modal-dl-row"><span>Bank details</span><strong>{displayValue(vendorProfile.bankDetails)}</strong></div>
+                  </div>
+                </div>
+              </div>
+
+              <CredentialFiles credentials={vendorProfile.credentials || []} />
+            </div>
+          ) : (
+            <div className="vendor-placeholder">
+              <Building className="w-10 h-10" />
+              <h3>Company Profile</h3>
+              <p>{TAB_COPY.profile}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'messages' && (
         <div className="panel-card">
           <div className="vendor-placeholder">
-            {activeTab === 'messages' ? <MessageSquare className="w-10 h-10" /> : <Building className="w-10 h-10" />}
-            <h3>{activeTab === 'messages' ? 'Messages' : 'Company Profile'}</h3>
-            <p>{TAB_COPY[activeTab]}</p>
+            <MessageSquare className="w-10 h-10" />
+            <h3>Messages</h3>
+            <p>{TAB_COPY.messages}</p>
           </div>
         </div>
       )}

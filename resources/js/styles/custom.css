@@ -2377,8 +2377,21 @@ body {
   color: #047857 !important;
 }
 
-.vendor-alert-banner .btn {
-  margin-left: auto;
+.vendor-alert-banner.is-pending {
+  background: var(--bg-warning-light);
+  border-color: var(--border-warning);
+}
+
+.vendor-alert-banner.is-pending svg {
+  color: var(--warning);
+}
+
+.vendor-alert-banner.is-pending strong {
+  color: #92400E !important;
+}
+
+.vendor-alert-banner.is-pending p {
+  color: #B45309 !important;
 }
 
 .vendor-rfq-feed,
@@ -2558,6 +2571,34 @@ body {
   font-size: 0.82rem;
   font-weight: 600;
   color: #64748B !important;
+}
+
+.vendor-credential-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.vendor-credential-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: #F8FAFC;
+}
+
+.vendor-credential-row strong {
+  display: block;
+  font-size: 0.82rem;
+}
+
+.vendor-credential-row p {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  color: #64748B;
 }
 
 @media (max-width: 720px) {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { BrandLogo } from '../components/layout/BrandLogo';
 import { useApp } from '../context/AppContext';
+import { VendorRegister } from './VendorRegister';
 
 export const Login = ({ portal = 'internal' }) => {
     const { login, actionError } = useApp();
@@ -9,6 +9,8 @@ export const Login = ({ portal = 'internal' }) => {
     const [password, setPassword] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [localError, setLocalError] = useState('');
+    const [view, setView] = useState('login');
+    const [registeredEmail, setRegisteredEmail] = useState('');
     const isVendor = portal === 'vendor';
 
     const handleSubmit = async (event) => {
@@ -16,7 +18,7 @@ export const Login = ({ portal = 'internal' }) => {
         setLocalError('');
         setSubmitting(true);
         try {
-            await login(email, password, portal);
+            await login(email.trim(), password, portal);
         } catch (error) {
             setLocalError(error.message || 'Unable to sign in.');
         } finally {
@@ -39,6 +41,14 @@ export const Login = ({ portal = 'internal' }) => {
                     ? 'Submit quotations, track RFQs, and confirm purchase orders.'
                     : 'Manage inventory, procurement, and warehouse operations.'}
             </p>
+
+            {registeredEmail && isVendor ? (
+                <div className="login-success">
+                    <p className="text-xs font-bold">
+                        Registration submitted for {registeredEmail}. You can sign in while supply chain reviews your credentials.
+                    </p>
+                </div>
+            ) : null}
 
             {(localError || actionError) && (
                 <div className="login-error">
@@ -76,23 +86,34 @@ export const Login = ({ portal = 'internal' }) => {
                 </button>
             </form>
 
-            <p className="login-switch">
-                {isVendor ? (
-                    <>
-                        Supply chain staff?{' '}
-                        <Link to="/" className="text-blue font-bold">Sign in here</Link>
-                    </>
-                ) : (
-                    <>
-                        Vendor?{' '}
-                        <Link to="/vendor" className="text-blue font-bold">Open Vendor Portal</Link>
-                    </>
-                )}
-            </p>
+            {isVendor ? (
+                <p className="login-footer">
+                    New vendor?{' '}
+                    <button type="button" className="login-text-link" onClick={() => setView('register')}>
+                        Register your company
+                    </button>
+                </p>
+            ) : null}
         </div>
     );
 
     if (isVendor) {
+        if (view === 'register') {
+            return (
+                <div className="login-screen login-screen-register">
+                    <VendorRegister
+                        onCancel={() => setView('login')}
+                        onRegistered={(nextEmail) => {
+                            setRegisteredEmail(nextEmail);
+                            setEmail(nextEmail);
+                            setLocalError('');
+                            setView('login');
+                        }}
+                    />
+                </div>
+            );
+        }
+
         return <div className="login-screen">{form}</div>;
     }
 

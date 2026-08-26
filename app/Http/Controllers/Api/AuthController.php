@@ -16,9 +16,11 @@ class AuthController extends Controller
     {
         $portal = $request->validated('portal') ?: 'internal';
 
+        $email = strtolower(trim((string) $request->validated('email')));
+
         $user = User::query()
-            ->with('supplier:id,code,company_name')
-            ->where('email', $request->validated('email'))
+            ->with('supplier:id,code,company_name,status')
+            ->whereRaw('LOWER(email) = ?', [$email])
             ->first();
 
         if (! $user || ! Hash::check($request->validated('password'), $user->password)) {

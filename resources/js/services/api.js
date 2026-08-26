@@ -244,6 +244,26 @@ export async function fileToBase64(file) {
     return btoa(binary);
 }
 
+export async function openProtectedFile(path) {
+    const token = getAuthToken();
+    const response = await fetch(path, {
+        credentials: 'include',
+        headers: {
+            Accept: '*/*',
+            'X-Requested-With': 'XMLHttpRequest',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+    });
+
+    if (!response.ok) {
+        throw new ApiError('Unable to open this file.', response.status);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener');
+}
+
 export const api = {
     get: (path, options = {}) => request(path, options),
     post: (path, body, options = {}) => request(path, { ...options, method: 'POST', body }),

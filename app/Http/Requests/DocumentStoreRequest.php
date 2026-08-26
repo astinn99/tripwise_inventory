@@ -14,12 +14,13 @@ class DocumentStoreRequest extends FormRequest
 
     public function rules(): array
     {
-        $requiresExpiry = in_array($this->input('type'), ['Warranty', 'Insurance', 'Contract'], true);
+        $requiresExpiry = in_array($this->input('type'), ['Warranty', 'Insurance', 'Contract', 'Business Permit'], true);
 
         return [
             'title' => ['required', 'string', 'max:255'],
             'type' => ['required', 'string', Rule::in([
                 'Warranty', 'Insurance', 'Contract', 'Purchase Order', 'Invoice', 'Inspection Report',
+                'Business Permit', 'SEC/DTI Registration',
             ])],
             'referenceNumber' => ['nullable', 'string', 'max:128'],
             'supplier' => ['nullable', 'string', 'max:255'],

@@ -2,17 +2,56 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Users, Phone, Mail, Building, Star } from 'lucide-react';
 import { Modal, displayValue } from '../components/ui/Modal';
+import { api } from '../services/api';
+import { CredentialFiles } from '../components/ui/CredentialFiles';
 
 export const Suppliers = () => {
-  const { suppliers, searchQuery } = useApp();
+  const { suppliers, searchQuery, approveSupplier, actionLoading } = useApp();
   const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [profile, setProfile] = useState(null);
 
   const filteredSuppliers = suppliers.filter(s =>
     s.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.categories.some(c => c.toLowerCase().includes(searchQuery.toLowerCase()))
+    (s.categories || []).some(c => c.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  const statusClass = (status) => (
+    status === 'Pending Approval' ? 'badge-pending' : 'badge-active'
+  );
+
+  const openProfile = async (supplier) => {
+    setSelectedSupplier(supplier);
+    setProfile(supplier);
+    try {
+      const detail = await api.get(`/api/suppliers/${supplier.id}`);
+      setProfile(detail);
+      setSelectedSupplier(detail);
+    } catch {
+      setProfile(supplier);
+    }
+  };
+
+  const closeProfile = () => {
+    setSelectedSupplier(null);
+    setProfile(null);
+  };
+
+  const handleApprove = async () => {
+    if (!selectedSupplier) {
+      return;
+    }
+    try {
+      const updated = await approveSupplier(selectedSupplier.id);
+      if (updated) {
+        setSelectedSupplier(updated);
+        setProfile(updated);
+      }
+    } catch {
+      // Surface via actionError banner.
+    }
+  };
 
   return (
     <div className="suppliers-page">
@@ -61,7 +100,7 @@ export const Suppliers = () => {
                   <td className="text-xs text-slate-300">{s.contactPerson}</td>
                   <td>
                     <div className="flex gap-1 flex-wrap">
-                      {s.categories.map((c, i) => (
+                      {(s.categories || []).map((c, i) => (
                         <span key={i} className="badge badge-info">{c}</span>
                       ))}
                     </div>
@@ -71,10 +110,10 @@ export const Suppliers = () => {
                   </td>
                   <td className="text-xs font-bold text-blue-400">{s.qualityScore}%</td>
                   <td className="text-xs font-bold text-emerald-400">{s.deliveryPerformance}%</td>
-                  <td><span className="badge badge-active">{s.status}</span></td>
+                  <td><span className={`badge ${statusClass(s.status)}`}>{s.status}</span></td>
                   <td className="text-right">
                     <button
-                      onClick={() => setSelectedSupplier(s)}
+                      onClick={() => openProfile(s)}
                       className="btn btn-outline btn-sm"
                     >
                       View Profile
@@ -89,14 +128,21 @@ export const Suppliers = () => {
 
       {selectedSupplier && (
         <Modal
-          onClose={() => setSelectedSupplier(null)}
+          onClose={closeProfile}
           icon={Building}
           tone="blue"
           size="lg"
           title="Supplier Legal & Financial Profile"
-          subtitle="Credentials, banking details, and rolling performance scores."
+          subtitle="Credentials, uploaded permits, banking details, and rolling performance scores."
           footer={(
-            <button onClick={() => setSelectedSupplier(null)} className="btn btn-outline btn-sm">Close Profile</button>
+            <>
+              {selectedSupplier.status !== 'Active' ? (
+                <button type="button" onClick={handleApprove} className="btn btn-primary btn-sm" disabled={actionLoading}>
+                  {actionLoading ? 'Approving...' : 'Approve vendor'}
+                </button>
+              ) : null}
+              <button onClick={closeProfile} className="btn btn-outline btn-sm">Close Profile</button>
+            </>
           )}
         >
           <div className="modal-hero">
@@ -157,7 +203,7 @@ export const Suppliers = () => {
               <div className="modal-dl">
                 <div className="modal-dl-row"><span>TIN</span><strong>{displayValue(selectedSupplier.taxId)}</strong></div>
                 <div className="modal-dl-row"><span>SEC / DTI #</span><strong>{displayValue(selectedSupplier.secRegistration)}</strong></div>
-                <div className="modal-dl-row"><span>Permits</span><strong>2026 Valid Mayor's Permit</strong></div>
+                <div className="modal-dl-row"><span>Status</span><strong>{displayValue(selectedSupplier.status)}</strong></div>
               </div>
             </div>
             <div className="modal-panel">
@@ -169,6 +215,8 @@ export const Suppliers = () => {
               </div>
             </div>
           </div>
+
+          <CredentialFiles credentials={profile?.credentials || selectedSupplier.credentials || []} />
         </Modal>
       )}
     </div>

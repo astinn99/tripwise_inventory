@@ -71,7 +71,8 @@ class AppBootstrapService
             || array_key_exists('deliveries', $query)
             || array_key_exists('movements', $query)
             || array_key_exists('supplyRequests', $query)
-            || array_key_exists('releases', $query);
+            || array_key_exists('releases', $query)
+            || array_key_exists('suppliers', $query);
 
         $clientStamp = (string) ($query['stamp'] ?? '');
 
@@ -149,6 +150,8 @@ class AppBootstrapService
                 (SELECT COALESCE(MAX(id), 0) FROM supply_requests) AS sr_id,
                 (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM supply_requests) AS sr_at,
                 (SELECT COALESCE(MAX(id), 0) FROM releases) AS rel_id,
+                (SELECT COALESCE(MAX(id), 0) FROM suppliers WHERE deleted_at IS NULL) AS suppliers_id,
+                (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM suppliers WHERE deleted_at IS NULL) AS suppliers_at,
                 (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id IS NULL) AS notif_id'
         );
 
@@ -160,6 +163,7 @@ class AppBootstrapService
             'movements' => (string) ($row->mov_id ?? 0),
             'supplyRequests' => ($row->sr_id ?? 0).'|'.($row->sr_at ?? '0'),
             'releases' => (string) ($row->rel_id ?? 0),
+            'suppliers' => ($row->suppliers_id ?? 0).'|'.($row->suppliers_at ?? '0'),
             'notifications' => (string) ($row->notif_id ?? 0),
         ];
     }
@@ -179,6 +183,7 @@ class AppBootstrapService
             'movements' => $this->movementsPayload(),
             'supplyRequests' => $this->supplyRequestsPayload(),
             'releases' => $this->releasesPayload(),
+            'suppliers' => $this->suppliersPayload(),
             default => [],
         };
     }
@@ -239,6 +244,16 @@ class AppBootstrapService
                 )
                 ->orderByDesc('id')
                 ->limit(40)
+                ->get()
+        ));
+    }
+
+    private function suppliersPayload(): array
+    {
+        return $this->resolve(SupplierResource::collection(
+            Supplier::query()
+                ->with(['documents' => fn ($query) => $query->orderByDesc('id')])
+                ->orderBy('company_name')
                 ->get()
         ));
     }
@@ -392,9 +407,7 @@ class AppBootstrapService
                     ->orderByDesc('id')
                     ->get()
             )),
-            'suppliers' => $this->resolve(SupplierResource::collection(
-                Supplier::query()->orderBy('company_name')->get()
-            )),
+            'suppliers' => $this->suppliersPayload(),
             'deliveries' => $this->resolve(DeliveryResource::collection(
                 Delivery::query()->with('items')->orderByDesc('id')->get()
             )),
@@ -638,7 +651,28 @@ SELECT
             'taxId', s.tax_id,
             'secRegistration', s.sec_registration,
             'bankDetails', s.bank_details,
-            'activeOrders', s.active_orders
+            'activeOrders', s.active_orders,
+            'credentials', (
+                SELECT COALESCE(json_agg(json_build_object(
+                    'id', d.document_number,
+                    'title', d.title,
+                    'type', d.type,
+                    'referenceNumber', d.reference_number,
+                    'expirationDate', to_char(d.expiration_date, 'YYYY-MM-DD'),
+                    'status', CASE
+                        WHEN d.expiration_date IS NULL THEN COALESCE(NULLIF(d.status, ''), 'Active')
+                        WHEN d.expiration_date < CURRENT_DATE THEN 'Expired'
+                        WHEN d.expiration_date <= (CURRENT_DATE + INTERVAL '30 days') THEN 'Expiring Soon'
+                        ELSE 'Active'
+                    END,
+                    'fileUrl', CASE WHEN NULLIF(d.file_path, '') IS NULL THEN NULL ELSE '/storage/' || d.file_path END,
+                    'downloadUrl', '/api/documents/' || d.document_number || '/download',
+                    'originalFilename', d.original_filename,
+                    'fileSize', d.file_size
+                ) ORDER BY d.id DESC), '[]'::json)
+                FROM documents d
+                WHERE d.supplier_id = s.id AND d.deleted_at IS NULL
+            )
         ) AS obj, s.company_name
         FROM suppliers s
         WHERE s.deleted_at IS NULL

@@ -3,8 +3,8 @@ import { useApp } from '../context/AppContext';
 import { FileText, Plus, Filter, Download, Upload } from 'lucide-react';
 import { Modal } from '../components/ui/Modal';
 
-const DOC_TYPES = ['ALL', 'Warranty', 'Insurance', 'Contract', 'Purchase Order', 'Invoice', 'Inspection Report'];
-const EXPIRY_REQUIRED = ['Warranty', 'Insurance', 'Contract'];
+const DOC_TYPES = ['ALL', 'Warranty', 'Insurance', 'Contract', 'Purchase Order', 'Invoice', 'Inspection Report', 'Business Permit', 'SEC/DTI Registration'];
+const EXPIRY_REQUIRED = ['Warranty', 'Insurance', 'Contract', 'Business Permit'];
 
 const emptyForm = {
   title: '',
