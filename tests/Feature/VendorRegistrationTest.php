@@ -164,6 +164,23 @@ class VendorRegistrationTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_vendor_can_register_with_others_category(): void
+    {
+        Storage::fake('public');
+
+        $payload = $this->validPayload();
+        $payload['email'] = 'others-vendor@acme.test';
+        $payload['categories'] = ['Others'];
+
+        $this->post('/api/vendor/register', $payload, [
+            'Accept' => 'application/json',
+        ])->assertCreated();
+
+        $supplier = Supplier::query()->where('email', 'others-vendor@acme.test')->first();
+        $this->assertNotNull($supplier);
+        $this->assertSame(['Others'], $supplier->categories);
+    }
+
     /**
      * @return array<string, mixed>
      */

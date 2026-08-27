@@ -12,6 +12,7 @@ class VendorRegisterRequest extends FormRequest
         'Communication Devices',
         'Maintenance Tools',
         'Fleet Consumables',
+        'Others',
     ];
 
     public function authorize(): bool

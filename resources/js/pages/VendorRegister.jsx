@@ -7,6 +7,7 @@ const CATEGORIES = [
     'Communication Devices',
     'Maintenance Tools',
     'Fleet Consumables',
+    'Others',
 ];
 
 const emptyForm = {
