@@ -127,7 +127,23 @@ class OtpService
 
     private function sendToRegisteredEmail(User $user, string $code, string $purpose): void
     {
-        Mail::to($user->email)->send(new EmailOtpMail($user, $code, $purpose));
+        $mailer = (string) config('mail.default');
+
+        if (in_array($mailer, ['log', 'array'], true) && ! app()->environment(['local', 'testing'])) {
+            throw new OtpException(
+                'Email is not configured on this server. Set MAIL_MAILER=smtp with Brevo credentials, then run php artisan config:clear.'
+            );
+        }
+
+        try {
+            Mail::mailer($mailer)->to($user->email)->send(new EmailOtpMail($user, $code, $purpose));
+        } catch (OtpException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            throw new OtpException('We could not send the verification email. Confirm SMTP settings and that outbound port 587 is open.');
+        }
     }
 
     private function generateCode(): string
