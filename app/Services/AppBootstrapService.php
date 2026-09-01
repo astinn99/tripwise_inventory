@@ -57,6 +57,10 @@ class AppBootstrapService
 
     public function liveForUser(User $user, array $query = []): array
     {
+        if ($user->isSupplier() && $user->supplier?->status === 'Active') {
+            $this->supplyChain->inviteSupplierToOpenRfqs($user->supplier);
+        }
+
         $stamps = $this->liveStamps($user);
         $payload = [
             'stamp' => implode('|', $stamps),
@@ -320,6 +324,10 @@ class AppBootstrapService
     private function supplierCollections(User $user): array
     {
         $supplierId = $user->supplier_id;
+
+        if ($user->supplier?->status === 'Active') {
+            $this->supplyChain->inviteSupplierToOpenRfqs($user->supplier);
+        }
 
         $purchaseOrders = PurchaseOrder::query()
             ->with(['items', 'procurementRequest:id,pr_number,priority', 'supplierAccount:id,code'])

@@ -512,6 +512,66 @@ class SupplyChainApiTest extends TestCase
             ->assertJsonPath('data.vendorInviteCount', 2);
     }
 
+    public function test_active_vendor_picks_up_open_rfqs_when_listing_opportunities(): void
+    {
+        $staff = User::factory()->create();
+        $existingSupplier = Supplier::query()->create([
+            'code' => 'SUP-212',
+            'company_name' => 'Existing Vendor Co',
+            'contact_person' => 'Old Vendor',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $existingSupplier->id,
+        ]);
+
+        InventoryItem::query()->create([
+            'code' => 'INV-212',
+            'item_code' => 'COM-212',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-212',
+                'quantity' => 8,
+                'reason' => 'Restock handheld radios',
+                'priority' => 'HIGH',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk();
+
+        $lateSupplier = Supplier::query()->create([
+            'code' => 'SUP-213',
+            'company_name' => 'Late Approved Vendor',
+            'contact_person' => 'New Vendor',
+            'status' => 'Active',
+            'categories' => ['Office Supplies'],
+        ]);
+        $lateVendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $lateSupplier->id,
+        ]);
+
+        $this->actingAs($lateVendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.prNumber', $prNumber)
+            ->assertJsonPath('data.0.itemName', 'toktok');
+    }
+
     public function test_notification_numbers_skip_existing_sequential_and_hex_ids(): void
     {
         AppNotification::query()->create([

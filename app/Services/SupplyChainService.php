@@ -32,6 +32,7 @@ use App\Support\DocumentCode;
 use App\Support\Priority;
 use App\Support\SafeBroadcast;
 use App\Support\WarrantyDuration;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -1305,12 +1306,48 @@ class SupplyChainService
         return $notified;
     }
 
-    private function publishOpportunities(ProcurementRequest $pr, ?string $category): int
+    public function inviteSupplierToOpenRfqs(Supplier $supplier): int
     {
-        $suppliers = Supplier::query()
+        if ($supplier->status !== 'Active') {
+            return 0;
+        }
+
+        $openRequests = ProcurementRequest::query()
+            ->whereIn('status', ['Quotation', 'For Procurement'])
+            ->whereNull('po_number')
+            ->where(function ($query) {
+                $query->whereNull('selected_supplier')->orWhere('selected_supplier', '');
+            })
+            ->whereHas('opportunities')
+            ->whereDoesntHave('opportunities', fn ($query) => $query->where('supplier_id', $supplier->id))
+            ->get();
+
+        if ($openRequests->isEmpty()) {
+            return 0;
+        }
+
+        $targets = new EloquentCollection([$supplier]);
+        $invited = 0;
+
+        foreach ($openRequests as $pr) {
+            $item = InventoryItem::query()->where('item_code', $pr->item_code)->first();
+            $invited += $this->publishOpportunities($pr, $item?->category, $targets);
+        }
+
+        return $invited;
+    }
+
+    /**
+     * @param  EloquentCollection<int, Supplier>|null  $suppliers
+     */
+    private function publishOpportunities(ProcurementRequest $pr, ?string $category, ?EloquentCollection $suppliers = null): int
+    {
+        $suppliers ??= Supplier::query()
             ->where('status', 'Active')
             ->with('users:id,supplier_id')
             ->get();
+
+        $suppliers->loadMissing('users:id,supplier_id');
 
         $alreadySent = SupplierOpportunity::query()
             ->where('procurement_request_id', $pr->id)
@@ -1327,16 +1364,37 @@ class SupplyChainService
         $priority = Priority::normalize($pr->priority);
         $quoteDays = Priority::quoteDays($priority);
         $neededInDays = Priority::neededInDays($priority, $pr->needed_in_days);
-        $deadline = $now->copy()->addDays($quoteDays)->toDateString();
-        $neededBy = $now->copy()->addDays($neededInDays)->toDateString();
-        $requirements = trim(implode(' ', array_filter([
-            "Please submit a quotation for {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
-            "Quote by ".Priority::displayDate($deadline).". Need item in {$neededInDays} day(s) (".Priority::displayDate($neededBy).").",
-            $pr->reason,
-        ])));
-        $budgetRange = $pr->estimated_cost
-            ? '₱'.number_format((float) $pr->estimated_cost, 2)
-            : 'TBD';
+        $existing = SupplierOpportunity::query()
+            ->where('procurement_request_id', $pr->id)
+            ->orderBy('id')
+            ->first();
+
+        if ($existing) {
+            $deadline = optional($existing->deadline)->toDateString()
+                ?: $now->copy()->addDays($quoteDays)->toDateString();
+            $neededBy = $now->copy()->addDays($neededInDays)->toDateString();
+            $requirements = (string) $existing->requirements;
+            $budgetRange = filled($existing->budget_range) ? (string) $existing->budget_range : 'TBD';
+            $category = $existing->category ?: $category;
+            $quantity = (int) $existing->quantity;
+            $title = $existing->title ?: $pr->item_name;
+            $deadlineLabel = Priority::displayDate($deadline);
+        } else {
+            $deadline = $now->copy()->addDays($quoteDays)->toDateString();
+            $neededBy = $now->copy()->addDays($neededInDays)->toDateString();
+            $requirements = trim(implode(' ', array_filter([
+                "Please submit a quotation for {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
+                "Quote by ".Priority::displayDate($deadline).". Need item in {$neededInDays} day(s) (".Priority::displayDate($neededBy).").",
+                $pr->reason,
+            ])));
+            $budgetRange = $pr->estimated_cost
+                ? '₱'.number_format((float) $pr->estimated_cost, 2)
+                : 'TBD';
+            $quantity = $pr->quantity;
+            $title = $pr->item_name;
+            $deadlineLabel = $quoteDays === 1 ? 'tomorrow' : Priority::displayDate($deadline);
+        }
+
         $codes = DocumentCode::nextMany('supplier_opportunities', 'opportunity_number', 'OPP', $newSuppliers->count());
         $rows = [];
 
@@ -1346,9 +1404,9 @@ class SupplyChainService
                 'pr_number' => $pr->pr_number,
                 'procurement_request_id' => $pr->id,
                 'supplier_id' => $supplier->id,
-                'title' => $pr->item_name,
+                'title' => $title,
                 'category' => $category,
-                'quantity' => $pr->quantity,
+                'quantity' => $quantity,
                 'deadline' => $deadline,
                 'budget_range' => $budgetRange,
                 'status' => 'Open for Quotation',
@@ -1361,14 +1419,13 @@ class SupplyChainService
         SupplierOpportunity::query()->insert($rows);
 
         $vendorNotes = [];
-        $deadlineLabel = $quoteDays === 1 ? 'tomorrow' : Priority::displayDate($deadline);
         foreach ($newSuppliers as $supplier) {
             foreach ($supplier->users as $vendorUser) {
                 $vendorNotes[] = [
                     'title' => $priority === Priority::NORMAL
                         ? 'New RFQ Available'
-                        : "{$priority} RFQ: quote {$pr->quantity} {$pr->item_name} by {$deadlineLabel}",
-                    'message' => "{$pr->pr_number}: quote {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}) by {$deadlineLabel}. Item needed by ".Priority::displayDate($neededBy).".",
+                        : "{$priority} RFQ: quote {$quantity} {$title} by {$deadlineLabel}",
+                    'message' => "{$pr->pr_number}: quote {$quantity} units of {$title} ({$pr->item_code}) by {$deadlineLabel}. Item needed by ".Priority::displayDate($neededBy).".",
                     'type' => 'procurement',
                     'severity' => Priority::notificationSeverity($priority),
                     'user_id' => $vendorUser->id,

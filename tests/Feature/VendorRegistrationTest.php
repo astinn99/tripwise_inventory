@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Mail\EmailOtpMail;
+use App\Models\InventoryItem;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -162,6 +163,95 @@ class VendorRegistrationTest extends TestCase
             ->assertJsonPath('data.status', 'Active');
 
         $this->assertSame('Active', $supplier->fresh()->status);
+    }
+
+    public function test_approving_a_vendor_invites_them_to_open_rfqs(): void
+    {
+        Storage::fake('public');
+
+        $staff = User::factory()->create();
+        $existingSupplier = Supplier::query()->create([
+            'code' => 'SUP-300',
+            'company_name' => 'Existing Vendor Co',
+            'contact_person' => 'Old Vendor',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $existingVendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $existingSupplier->id,
+        ]);
+
+        InventoryItem::query()->create([
+            'code' => 'INV-300',
+            'item_code' => 'COM-300',
+            'description' => 'toktok',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $openPr = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-300',
+                'quantity' => 10,
+                'reason' => 'Restock handheld radios',
+                'priority' => 'HIGH',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-300',
+                'quantity' => 4,
+                'reason' => 'Draft request not sent yet',
+                'priority' => 'NORMAL',
+            ])
+            ->assertCreated();
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$openPr.'/send-to-vendors')
+            ->assertOk();
+
+        $this->actingAs($existingVendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.prNumber', $openPr);
+
+        $this->post('/api/vendor/register', $this->validPayload(), [
+            'Accept' => 'application/json',
+        ])->assertCreated();
+
+        $newVendor = User::query()->where('email', 'vendor@acme.test')->first();
+        $supplier = Supplier::query()->where('email', 'vendor@acme.test')->first();
+
+        $this->actingAs($newVendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->actingAs($staff)
+            ->postJson('/api/suppliers/'.$supplier->code.'/approve')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'Active');
+
+        $this->actingAs($newVendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.prNumber', $openPr)
+            ->assertJsonPath('data.0.itemCode', 'COM-300')
+            ->assertJsonPath('data.0.itemName', 'toktok');
+
+        $this->actingAs($existingVendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.prNumber', $openPr);
     }
 
     public function test_registration_requires_permit_and_sec_files(): void

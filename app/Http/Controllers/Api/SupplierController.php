@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\SupplierResource;
 use App\Models\Supplier;
 use App\Services\NotificationService;
+use App\Services\SupplyChainService;
 
 class SupplierController extends Controller
 {
@@ -27,9 +28,11 @@ class SupplierController extends Controller
         return $this->ok(new SupplierResource($supplier));
     }
 
-    public function approve(Supplier $supplier, NotificationService $notifications)
+    public function approve(Supplier $supplier, NotificationService $notifications, SupplyChainService $supplyChain)
     {
         $supplier->update(['status' => 'Active']);
+        $supplier->load('users');
+        $supplyChain->inviteSupplierToOpenRfqs($supplier);
 
         foreach ($supplier->users as $vendorUser) {
             $notifications->create(
