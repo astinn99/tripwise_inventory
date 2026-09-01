@@ -52,33 +52,48 @@ const quoteBadgeClass = (status) => {
 
 const deadlineState = (deadline) => {
   if (!deadline) {
-    return { label: 'No deadline', tone: '' };
+    return { short: 'No deadline', label: 'No deadline', tone: '' };
   }
 
   const pretty = formatDisplayDate(deadline) || deadline;
   const days = Math.ceil((new Date(`${deadline}T23:59:59`) - new Date()) / 86400000);
   if (Number.isNaN(days)) {
-    return { label: pretty, tone: '' };
+    return { short: pretty, label: pretty, tone: '' };
   }
   if (days < 0) {
-    return { label: `Overdue · ${pretty}`, tone: 'is-overdue' };
+    return { short: 'Overdue', label: `Overdue · ${pretty}`, tone: 'is-overdue' };
   }
   if (days === 0) {
-    return { label: `Due today · ${pretty}`, tone: 'is-soon' };
+    return { short: 'Due today', label: `Due today · ${pretty}`, tone: 'is-soon' };
   }
   if (days <= 3) {
-    return { label: `${days} day${days === 1 ? '' : 's'} left · ${pretty}`, tone: 'is-soon' };
+    const short = `${days} day${days === 1 ? '' : 's'} left`;
+    return { short, label: `${short} · ${pretty}`, tone: 'is-soon' };
   }
 
-  return { label: pretty, tone: '' };
+  return { short: pretty, label: pretty, tone: '' };
+};
+
+const rfqReason = (requirements) => {
+  if (!requirements) {
+    return '';
+  }
+
+  return String(requirements)
+    .replace(/Please submit a quotation for .*?(?:\.|$)\s*/i, '')
+    .replace(/Quote by .*?(?:\.|$)\s*/i, '')
+    .replace(/Need item in .*?(?:\.|$)\s*/i, '')
+    .trim();
 };
 
 const OpportunityCard = ({ opp, compact = false, onQuote }) => {
   const due = deadlineState(opp.deadline);
   const priority = normalizePriority(opp.priority);
+  const reason = rfqReason(opp.requirements);
+  const meta = [opp.category, opp.itemCode].filter(Boolean).join(' · ');
   const cta = (
     <button type="button" onClick={() => onQuote(opp)} className="btn btn-primary btn-sm vendor-rfq-cta">
-      <Send className="w-3.5 h-3.5" /> {compact ? 'Submit Quotation' : 'Submit Formal Quotation'}
+      <Send className="w-3.5 h-3.5" /> Submit quotation
     </button>
   );
 
@@ -90,47 +105,50 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
 
       <div className="vendor-rfq-body">
         <div className="vendor-rfq-top">
-          <span className="modal-kicker">{opp.prNumber}</span>
-          <span className={`vendor-deadline ${due.tone}`}>
-            <Clock className="w-3 h-3" />
-            {due.label}
-          </span>
+          <span className="vendor-rfq-ref">{opp.prNumber}</span>
+          <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>
         </div>
         <h4 className="vendor-rfq-title">{opp.itemName || opp.title}</h4>
-        <div className="vendor-rfq-chips">
-          <span className="badge badge-normal">{opp.category || 'RFQ'}</span>
-          {opp.itemCode ? <span className="modal-chip">{opp.itemCode}</span> : null}
-          <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>
-          {opp.neededBy ? <span className="modal-chip">Need item by {formatDisplayDate(opp.neededBy)}</span> : null}
-        </div>
+        {meta ? <p className="vendor-rfq-meta">{meta}</p> : null}
 
         {!compact && (
           <>
-            <div className="vendor-rfq-stats">
+            <dl className="vendor-rfq-stats">
               <div>
-                <span>Qty needed</span>
-                <strong>{opp.quantity} units</strong>
+                <dt>Qty</dt>
+                <dd>{opp.quantity} units</dd>
               </div>
               <div>
-                <span>Budget</span>
-                <strong>{opp.budgetRange || '—'}</strong>
+                <dt>Budget</dt>
+                <dd>{opp.budgetRange || '—'}</dd>
               </div>
               <div>
-                <span>Quote by</span>
-                <strong className={due.tone}>{formatDisplayDate(opp.deadline) || '—'}</strong>
+                <dt>Quote by</dt>
+                <dd className={due.tone}>{formatDisplayDate(opp.deadline) || '—'}</dd>
               </div>
+              {opp.neededBy ? (
+                <div>
+                  <dt>Need item</dt>
+                  <dd>{formatDisplayDate(opp.neededBy)}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {reason ? <p className="vendor-rfq-notes">{reason}</p> : null}
+            <div className="vendor-rfq-foot">
+              <span className={`vendor-deadline ${due.tone}`}>
+                <Clock className="w-3 h-3" />
+                {due.short}
+              </span>
+              {cta}
             </div>
-            {opp.requirements ? (
-              <p className="vendor-rfq-notes">{opp.requirements}</p>
-            ) : null}
-            {cta}
           </>
         )}
 
         {compact && (
           <p className="vendor-rfq-notes is-compact">
-            {opp.quantity} units{opp.budgetRange ? ` · ${opp.budgetRange}` : ''}
-            {opp.requirements ? ` · ${opp.requirements}` : ''}
+            {opp.quantity} units
+            {opp.budgetRange ? ` · ${opp.budgetRange}` : ''}
+            {` · ${due.short}`}
           </p>
         )}
       </div>
