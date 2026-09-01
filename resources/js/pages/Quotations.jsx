@@ -1,24 +1,29 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { FileSpreadsheet, CheckCircle2 } from 'lucide-react';
-import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
+import { FileSpreadsheet, CheckCircle2, Star } from 'lucide-react';
+import { ItemThumb } from '../components/ui/ItemThumb';
 import { normalizePriority, priorityBadgeClass, sortByPriority } from '../services/priority';
+
+const hasValue = (value) => {
+  const text = String(value || '').trim();
+  return text !== '' && text.toLowerCase() !== 'none';
+};
 
 export const Quotations = () => {
   const { quotations, selectSupplierAndCreatePO, searchQuery } = useApp();
+  const query = searchQuery.toLowerCase();
 
-  const filteredQuotes = sortByPriority(quotations.filter(q =>
-    !String(q.id || '').startsWith('tmp-') && (
-      q.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.item.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      q.procurementId.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredQuotes = sortByPriority(quotations.filter((quote) =>
+    !String(quote.id || '').startsWith('tmp-') && (
+      quote.id.toLowerCase().includes(query) ||
+      quote.supplierName.toLowerCase().includes(query) ||
+      quote.item.toLowerCase().includes(query) ||
+      quote.procurementId.toLowerCase().includes(query)
     )
   ));
 
   return (
     <div className="quotations-page">
-      {/* PSM Banner */}
       <div className="subsystem-banner">
         <div className="subsystem-title-group">
           <span className="subsystem-badge">PSM SOURCING</span>
@@ -36,83 +41,76 @@ export const Quotations = () => {
           </span>
         </div>
 
-        <div className="table-responsive">
-          <table className="custom-table table-stack">
-            <thead>
-              <tr>
-                <th>Quotation ID</th>
-                <th>Procurement Ref</th>
-                <th>Priority</th>
-                <th>Supplier Name</th>
-                <th>Item & Qty</th>
-                <th>Vendor Photos</th>
-                <th className="text-right">Unit Price</th>
-                <th className="text-right">Total Price</th>
-                <th>Delivery Lead Time</th>
-                <th>Warranty</th>
-                <th>Guide / Manual</th>
-                <th>Vendor Rating</th>
-                <th>Status</th>
-                <th className="text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredQuotes.map(q => (
-                <tr key={q.id}>
-                  <td data-label="Quotation ID" className="font-mono text-xs text-blue font-bold">{q.id}</td>
-                  <td data-label="Procurement Ref" className="font-mono text-xs text-purple-400 font-semibold">{q.procurementId}</td>
-                  <td data-label="Priority">
-                    <span className={`badge ${priorityBadgeClass(q.priority)}`}>{normalizePriority(q.priority)}</span>
-                  </td>
-                  <td data-label="Supplier Name" className="font-bold text-xs text-primary">{q.supplierName}</td>
-                  <td data-label="Item & Qty">
-                    <ItemIdentity
-                      src={q.imageUrl}
-                      name={q.item}
-                      extra={`Qty: ${q.quantity}`}
-                    />
-                  </td>
-                  <td data-label="Vendor Photos">
-                    {q.itemPhotoUrls?.length ? (
+        {filteredQuotes.length === 0 ? (
+          <div className="empty-state">
+            <p>No vendor quotations match this search.</p>
+          </div>
+        ) : (
+          <div className="quotations-list">
+            {filteredQuotes.map((quote) => {
+              const warranty = quote.warrantyLabel || quote.warranty;
+              const selected = quote.status === 'Selected';
+
+              return (
+                <article key={quote.id} className={`quote-eval-card ${selected ? 'is-selected' : ''}`}>
+                  <div className="quote-eval-item">
+                    <ItemThumb src={quote.imageUrl} alt={quote.item} />
+                    <div className="quote-eval-copy">
+                      <div className="quote-eval-ids">
+                        <span className="quote-eval-qt">{quote.id}</span>
+                        <span className="quote-eval-pr">{quote.procurementId}</span>
+                        <span className={`badge ${priorityBadgeClass(quote.priority)}`}>{normalizePriority(quote.priority)}</span>
+                      </div>
+                      <h4 className="quote-eval-title">{quote.item}</h4>
+                      <p className="quote-eval-sub">{quote.supplierName} · Qty {quote.quantity}</p>
+                    </div>
+                  </div>
+
+                  <div className="quote-eval-offer">
+                    <strong>₱{Number(quote.totalPrice).toLocaleString()}</strong>
+                    <span>₱{Number(quote.unitPrice).toLocaleString()} / unit</span>
+                  </div>
+
+                  <div className="quote-eval-meta">
+                    <span className="quote-eval-chip">{quote.deliveryTimeDays} day lead</span>
+                    {hasValue(warranty) ? <span className="quote-eval-chip">{warranty}</span> : null}
+                    {quote.manualFileUrl ? (
+                      <a href={quote.manualFileUrl} target="_blank" rel="noreferrer" className="quote-eval-chip is-link">Manual</a>
+                    ) : null}
+                    {quote.qualityRating ? (
+                      <span className="quote-eval-chip">
+                        <Star className="w-3 h-3" /> {quote.qualityRating}
+                      </span>
+                    ) : null}
+                    <span className={`badge badge-${selected ? 'supplier-selected' : 'info'}`}>{quote.status}</span>
+                    {quote.itemPhotoUrls?.length ? (
                       <div className="quote-photo-strip">
-                        {q.itemPhotoUrls.map((url) => (
-                          <ItemThumb key={url} src={url} alt={`${q.supplierName} — ${q.item}`} />
+                        {quote.itemPhotoUrls.map((url) => (
+                          <ItemThumb key={url} src={url} alt={`${quote.supplierName} — ${quote.item}`} />
                         ))}
                       </div>
+                    ) : null}
+                  </div>
+
+                  <div className="quote-eval-aside">
+                    {selected ? (
+                      <span className="quote-eval-selected">Selected</span>
                     ) : (
-                      <span className="quote-photo-empty">None</span>
-                    )}
-                  </td>
-                  <td data-label="Unit Price" className="text-right font-mono text-xs text-secondary">₱{Number(q.unitPrice).toLocaleString()}</td>
-                  <td data-label="Total Price" className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
-                  <td data-label="Delivery Lead Time" className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
-                  <td data-label="Warranty" className="text-xs text-secondary">{q.warrantyLabel || q.warranty || 'None'}</td>
-                  <td data-label="Guide / Manual" className="text-xs text-secondary">
-                    {q.manualFileUrl ? (
-                      <a href={q.manualFileUrl} target="_blank" rel="noreferrer">View</a>
-                    ) : 'None'}
-                  </td>
-                  <td data-label="Vendor Rating"><span className="badge badge-normal">★ {q.qualityRating}</span></td>
-                  <td data-label="Status">
-                    <span className={`badge badge-${q.status === 'Selected' ? 'supplier-selected' : 'info'}`}>
-                      {q.status}
-                    </span>
-                  </td>
-                  <td data-label="Action" className="text-right table-stack-actions">
-                    {q.status !== 'Selected' && (
                       <button
-                        onClick={() => selectSupplierAndCreatePO(q.procurementId, q.id)}
+                        type="button"
+                        onClick={() => selectSupplierAndCreatePO(quote.procurementId, quote.id)}
                         className="btn btn-primary btn-sm"
+                        title="Select supplier and create purchase order"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Select & Create PO
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Select
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

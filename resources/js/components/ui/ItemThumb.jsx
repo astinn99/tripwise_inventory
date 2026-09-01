@@ -215,20 +215,14 @@ export function ItemThumb({ src, alt = '', size = 'sm' }) {
   );
 }
 
-export function ItemIdentity(props) {
-  const extraText = props.extra || props.extra || props.extra;
-
+export function ItemIdentity({ src, name, extra, code }) {
   return (
     <div className="item-name-cell">
-      <ItemThumb src={props.src} alt={props.name} />
+      <ItemThumb src={src} alt={name} />
       <div>
-        <div className="font-bold text-xs text-black">{props.name}</div>
-        {props.extra || extraText ? (
-          <div className="font-mono text-xs text-secondary">
-            {props.extra}
-            {extraText ? ` ${extraText}` : ''}
-          </div>
-        ) : null}
+        <div className="font-bold text-xs text-black">{name}</div>
+        {code ? <div className="font-mono text-xs text-secondary">{code}</div> : null}
+        {extra ? <div className="font-mono text-xs text-secondary">{extra}</div> : null}
       </div>
     </div>
   );
