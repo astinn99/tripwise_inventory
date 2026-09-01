@@ -14,12 +14,22 @@ import {
   Phone,
   Mail,
   X,
+  BookOpen,
+  AlertTriangle,
 } from 'lucide-react';
 import { Modal, displayValue } from '../components/ui/Modal';
 import { api } from '../services/api';
 import { CredentialFiles } from '../components/ui/CredentialFiles';
 import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
 import { compressImageFile, formatFileSize } from '../services/images';
+import { formatDisplayDate } from '../services/dates';
+import {
+  normalizePriority,
+  preferredMaxDeliveryDays,
+  PRIORITIES,
+  priorityBadgeClass,
+  sortByPriority,
+} from '../services/priority';
 
 const MAX_ITEM_PHOTOS = 3;
 const MAX_ITEM_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -45,25 +55,27 @@ const deadlineState = (deadline) => {
     return { label: 'No deadline', tone: '' };
   }
 
+  const pretty = formatDisplayDate(deadline) || deadline;
   const days = Math.ceil((new Date(`${deadline}T23:59:59`) - new Date()) / 86400000);
   if (Number.isNaN(days)) {
-    return { label: deadline, tone: '' };
+    return { label: pretty, tone: '' };
   }
   if (days < 0) {
-    return { label: `Overdue · ${deadline}`, tone: 'is-overdue' };
+    return { label: `Overdue · ${pretty}`, tone: 'is-overdue' };
   }
   if (days === 0) {
-    return { label: `Due today · ${deadline}`, tone: 'is-soon' };
+    return { label: `Due today · ${pretty}`, tone: 'is-soon' };
   }
   if (days <= 3) {
-    return { label: `${days} day${days === 1 ? '' : 's'} left · ${deadline}`, tone: 'is-soon' };
+    return { label: `${days} day${days === 1 ? '' : 's'} left · ${pretty}`, tone: 'is-soon' };
   }
 
-  return { label: deadline, tone: '' };
+  return { label: pretty, tone: '' };
 };
 
 const OpportunityCard = ({ opp, compact = false, onQuote }) => {
   const due = deadlineState(opp.deadline);
+  const priority = normalizePriority(opp.priority);
   const cta = (
     <button type="button" onClick={() => onQuote(opp)} className="btn btn-primary btn-sm vendor-rfq-cta">
       <Send className="w-3.5 h-3.5" /> {compact ? 'Submit Quotation' : 'Submit Formal Quotation'}
@@ -71,7 +83,7 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
   );
 
   return (
-    <article className={`vendor-rfq-card ${compact ? 'is-compact' : ''}`}>
+    <article className={`vendor-rfq-card ${compact ? 'is-compact' : ''} ${priority === 'URGENT' ? 'is-urgent' : ''} ${priority === 'HIGH' ? 'is-high' : ''}`}>
       <div className="vendor-rfq-media">
         <ItemThumb src={opp.imageUrl} alt={opp.itemName || opp.title} size={compact ? 'md' : 'card'} />
       </div>
@@ -88,9 +100,8 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
         <div className="vendor-rfq-chips">
           <span className="badge badge-normal">{opp.category || 'RFQ'}</span>
           {opp.itemCode ? <span className="modal-chip">{opp.itemCode}</span> : null}
-          {opp.priority && opp.priority !== 'NORMAL' ? (
-            <span className={`badge ${opp.priority === 'URGENT' ? 'badge-urgent' : 'badge-for-procurement'}`}>{opp.priority}</span>
-          ) : null}
+          <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>
+          {opp.neededBy ? <span className="modal-chip">Need item by {formatDisplayDate(opp.neededBy)}</span> : null}
         </div>
 
         {!compact && (
@@ -105,8 +116,8 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
                 <strong>{opp.budgetRange || '—'}</strong>
               </div>
               <div>
-                <span>Deadline</span>
-                <strong className={due.tone}>{opp.deadline || '—'}</strong>
+                <span>Quote by</span>
+                <strong className={due.tone}>{formatDisplayDate(opp.deadline) || '—'}</strong>
               </div>
             </div>
             {opp.requirements ? (
@@ -190,6 +201,44 @@ const QuotePhotoPicker = ({ savedPhotos, newPhotos, error, busy, onAdd, onRemove
   );
 };
 
+const QuoteFileField = ({
+  label,
+  hint,
+  accept,
+  busy,
+  disabled,
+  fileHint,
+  existingUrl,
+  existingLabel,
+  selectedFile,
+  onChange,
+}) => (
+  <div className="form-group">
+    <label className="form-label">{label}</label>
+    <input
+      type="file"
+      accept={accept}
+      className="form-control"
+      disabled={busy || disabled}
+      onChange={(e) => {
+        onChange(e.target.files?.[0] || null);
+        e.target.value = '';
+      }}
+    />
+    <p className="item-photo-hint">{hint}</p>
+    {fileHint ? <p className="item-photo-hint">{fileHint}</p> : null}
+    {selectedFile ? (
+      <p className="item-photo-hint">Selected: {selectedFile.name}</p>
+    ) : null}
+    {existingUrl && !selectedFile ? (
+      <p className="text-xs text-slate-400 mt-1">
+        <a href={existingUrl} target="_blank" rel="noreferrer">{existingLabel}</a>
+        {' '}is already on file. Choose a new file to replace it.
+      </p>
+    ) : null}
+  </div>
+);
+
 export const VendorPortal = ({ activeTab, setActiveTab }) => {
   const {
     opportunities,
@@ -204,15 +253,19 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
   } = useApp();
 
   const uploadAbortRef = useRef(null);
-  const savedQuotes = quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-'));
+  const savedQuotes = sortByPriority(quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-')));
+  const rankedOpportunities = sortByPriority(opportunities);
+  const rankedPurchaseOrders = sortByPriority(purchaseOrders, 'confirmBy');
+  const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [selectedOpp, setSelectedOpp] = useState(null);
   const [editingQuote, setEditingQuote] = useState(null);
 
   const emptyQuoteForm = {
     unitPrice: '',
-    warrantyMonths: '12',
+    warrantyMonths: '',
     warranty: '',
     warrantyFile: null,
+    manualFile: null,
     deliveryTimeDays: '',
     paymentTerms: '30 Days Net',
     notes: '',
@@ -225,9 +278,15 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [warrantyBusy, setWarrantyBusy] = useState(false);
   const [warrantyHint, setWarrantyHint] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualHint, setManualHint] = useState('');
   const [vendorProfile, setVendorProfile] = useState(null);
 
-  const awaitingConfirm = purchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier');
+  const awaitingConfirm = rankedPurchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier');
+  const urgentOpen = rankedOpportunities.filter((opp) => normalizePriority(opp.priority) === 'URGENT');
+  const visibleOpportunities = priorityFilter === 'ALL'
+    ? rankedOpportunities
+    : rankedOpportunities.filter((opp) => normalizePriority(opp.priority) === priorityFilter);
   const pendingApproval = (vendorProfile?.status || user?.supplierStatus) === 'Pending Approval';
 
   useEffect(() => {
@@ -257,6 +316,8 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     setPhotoBusy(false);
     setWarrantyBusy(false);
     setWarrantyHint('');
+    setManualBusy(false);
+    setManualHint('');
   };
 
   const closeQuoteModal = () => {
@@ -280,9 +341,10 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     setEditingQuote(quote);
     setQuoteForm({
       unitPrice: quote.unitPrice ?? '',
-      warrantyMonths: quote.warrantyMonths ? String(quote.warrantyMonths) : '12',
+      warrantyMonths: quote.warrantyMonths ? String(quote.warrantyMonths) : '',
       warranty: quote.warranty || '',
       warrantyFile: null,
+      manualFile: null,
       deliveryTimeDays: quote.deliveryTimeDays ?? '',
       paymentTerms: quote.paymentTerms || '30 Days Net',
       notes: quote.notes || '',
@@ -339,99 +401,108 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     setPhotoError('');
   };
 
-  const attachWarranty = async (file) => {
+  const attachOptionalFile = async (file, field, setBusy, setHint) => {
     if (!file) {
-      setQuoteForm((current) => ({ ...current, warrantyFile: null }));
-      setWarrantyHint('');
+      setQuoteForm((current) => ({ ...current, [field]: null }));
+      setHint('');
       return;
     }
 
-    setWarrantyBusy(true);
-    setWarrantyHint('Optimizing file…');
+    setBusy(true);
+    setHint('Optimizing file…');
     try {
       const prepared = file.type.startsWith('image/')
         ? await compressImageFile(file)
         : file;
-      setQuoteForm((current) => ({ ...current, warrantyFile: prepared }));
+      setQuoteForm((current) => ({ ...current, [field]: prepared }));
       if (prepared.size < file.size) {
-        setWarrantyHint(`Reduced automatically from ${formatFileSize(file.size)} to ${formatFileSize(prepared.size)}.`);
+        setHint(`Reduced automatically from ${formatFileSize(file.size)} to ${formatFileSize(prepared.size)}.`);
         return;
       }
-      setWarrantyHint(prepared.size > 512 * 1024
+      setHint(prepared.size > 512 * 1024
         ? 'Large file — it will be uploaded in smaller pieces so it stays under the server limit.'
         : '');
     } catch {
-      setQuoteForm((current) => ({ ...current, warrantyFile: file }));
-      setWarrantyHint('');
+      setQuoteForm((current) => ({ ...current, [field]: file }));
+      setHint('');
     } finally {
-      setWarrantyBusy(false);
+      setBusy(false);
     }
   };
+
+  const filesBusy = photoBusy || warrantyBusy || manualBusy;
 
   const handleQuoteSubmit = async (e) => {
     e.preventDefault();
     if (!selectedOpp && !editingQuote) return;
 
-      if (photoBusy || warrantyBusy) {
-        setPhotoError('Please wait until the selected files finish processing.');
+    if (filesBusy) {
+      setPhotoError('Please wait until the selected files finish processing.');
+      return;
+    }
+
+    if (photoCount < 1) {
+      setPhotoError('Attach at least 1 photo of the actual item you are offering.');
+      return;
+    }
+
+    const photosToUpload = newPhotos;
+    const photosToKeep = savedPhotos;
+
+    const controller = new AbortController();
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = controller;
+
+    try {
+      const quoteFields = {
+        unitPrice: Number(quoteForm.unitPrice),
+        warrantyMonths: quoteForm.warrantyMonths ? Number(quoteForm.warrantyMonths) : null,
+        warranty: quoteForm.warranty,
+        warrantyFile: quoteForm.warrantyFile,
+        manualFile: quoteForm.manualFile,
+        itemPhotos: photosToUpload,
+        deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
+        paymentTerms: quoteForm.paymentTerms,
+        notes: quoteForm.notes,
+      };
+
+      const result = editingQuote
+        ? await updateSupplierQuotation(editingQuote.id, {
+          ...quoteFields,
+          keepItemPhotos: photosToKeep,
+        }, { signal: controller.signal })
+        : await submitSupplierQuotation({
+          ...quoteFields,
+          procurementId: selectedOpp.prNumber,
+          supplierId: user?.supplierId,
+          supplierName: user?.supplierName,
+          item: selectedOpp.itemName || selectedOpp.title,
+          quantity: selectedOpp.quantity,
+          totalPrice: Number(quoteForm.unitPrice) * selectedOpp.quantity,
+          qualityRating: 4.8,
+        }, { signal: controller.signal });
+      if (controller.signal.aborted || !result) {
         return;
       }
-
-      if (photoCount < 1) {
-        setPhotoError('Attach at least 1 photo of the actual item you are offering.');
-        return;
-      }
-
-      const photosToUpload = newPhotos;
-      const photosToKeep = savedPhotos;
-
-      const controller = new AbortController();
-      uploadAbortRef.current?.abort();
-      uploadAbortRef.current = controller;
-
-      try {
-        const result = editingQuote
-          ? await updateSupplierQuotation(editingQuote.id, {
-            unitPrice: Number(quoteForm.unitPrice),
-            warrantyMonths: Number(quoteForm.warrantyMonths),
-            warranty: quoteForm.warranty,
-            warrantyFile: quoteForm.warrantyFile,
-            itemPhotos: photosToUpload,
-            keepItemPhotos: photosToKeep,
-            deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
-            paymentTerms: quoteForm.paymentTerms,
-            notes: quoteForm.notes,
-          }, { signal: controller.signal })
-          : await submitSupplierQuotation({
-            procurementId: selectedOpp.prNumber,
-            supplierId: user?.supplierId,
-            supplierName: user?.supplierName,
-            item: selectedOpp.itemName || selectedOpp.title,
-            quantity: selectedOpp.quantity,
-            unitPrice: Number(quoteForm.unitPrice),
-            totalPrice: Number(quoteForm.unitPrice) * selectedOpp.quantity,
-            warrantyMonths: Number(quoteForm.warrantyMonths),
-            warranty: quoteForm.warranty,
-            warrantyFile: quoteForm.warrantyFile,
-            itemPhotos: photosToUpload,
-            deliveryTimeDays: Number(quoteForm.deliveryTimeDays),
-            qualityRating: 4.8,
-            paymentTerms: quoteForm.paymentTerms,
-            notes: quoteForm.notes,
-          }, { signal: controller.signal });
-        if (controller.signal.aborted || !result) {
-          return;
-        }
-        uploadAbortRef.current = null;
-        closeQuoteModal();
-        setActiveTab('my_quotes');
-      } catch {
-        // Keep the modal open so the vendor can fix the attachment and retry.
-      }
+      uploadAbortRef.current = null;
+      closeQuoteModal();
+      setActiveTab('my_quotes');
+    } catch {
+      // Keep the modal open so the vendor can fix the attachment and retry.
+    }
   };
 
   const quoteTarget = editingQuote || selectedOpp;
   const quoteQty = editingQuote?.quantity ?? selectedOpp?.quantity ?? 0;
+  const quotePriority = normalizePriority(editingQuote?.priority || selectedOpp?.priority);
+  const quoteNeededBy = editingQuote?.neededBy || selectedOpp?.neededBy;
+  const quoteDeadline = selectedOpp?.deadline;
+  const quoteOverdue = Boolean(selectedOpp?.isOverdue);
+  const maxDeliveryDays = preferredMaxDeliveryDays(
+    quotePriority,
+    selectedOpp?.neededInDays || selectedOpp?.preferredMaxDeliveryDays
+  );
+  const deliveryTooSlow = Boolean(maxDeliveryDays && Number(quoteForm.deliveryTimeDays) > maxDeliveryDays);
 
   return (
     <div className="vendor-portal-page">
@@ -460,8 +531,10 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                 <span className="kpi-title">Open RFQ Opportunities</span>
                 <div className="kpi-icon-box text-blue"><ShoppingBag className="w-5 h-5" /></div>
               </div>
-              <div className="kpi-value text-blue">{opportunities.length}</div>
-              <div className="kpi-footer">Available for bidding</div>
+              <div className="kpi-value text-blue">{rankedOpportunities.length}</div>
+              <div className="kpi-footer">
+                {urgentOpen.length > 0 ? `${urgentOpen.length} urgent RFQ${urgentOpen.length === 1 ? '' : 's'} due` : 'Available for bidding'}
+              </div>
             </button>
 
             <button type="button" className="kpi-card vendor-kpi" onClick={() => setActiveTab('my_quotes')}>
@@ -478,12 +551,25 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                 <span className="kpi-title">Awarded Purchase Orders</span>
                 <div className="kpi-icon-box text-success"><CheckCircle2 className="w-5 h-5" /></div>
               </div>
-              <div className="kpi-value text-success">{purchaseOrders.length}</div>
+              <div className="kpi-value text-success">{rankedPurchaseOrders.length}</div>
               <div className="kpi-footer">
                 {awaitingConfirm.length > 0 ? `${awaitingConfirm.length} awaiting confirmation` : 'Active procurement POs'}
               </div>
             </button>
           </div>
+
+          {urgentOpen.length > 0 && (
+            <div className="vendor-alert-banner is-urgent">
+              <AlertTriangle className="w-5 h-5" />
+              <div>
+                <strong>{urgentOpen.length} urgent RFQ{urgentOpen.length === 1 ? '' : 's'} need a quote</strong>
+                <p>Operations cannot wait. Quote the fastest realistic delivery first.</p>
+              </div>
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => setActiveTab('opportunities')}>
+                Review urgent RFQs
+              </button>
+            </div>
+          )}
 
           {awaitingConfirm.length > 0 && (
             <div className="vendor-alert-banner">
@@ -501,19 +587,19 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           <div className="panel-card">
             <div className="panel-header">
               <span className="panel-title"><ShoppingBag className="w-5 h-5 text-blue" /> Open Sourcing Opportunities</span>
-              {opportunities.length > 0 && (
+              {rankedOpportunities.length > 0 && (
                 <button type="button" className="btn btn-outline btn-sm" onClick={() => setActiveTab('opportunities')}>
                   View all
                 </button>
               )}
             </div>
-            {opportunities.length === 0 ? (
+            {rankedOpportunities.length === 0 ? (
               <div className="empty-state">
                 <p>No open RFQs right now. Submitted quotes appear under My Quotes.</p>
               </div>
             ) : (
               <div className="vendor-rfq-feed">
-                {opportunities.slice(0, 4).map((opp) => (
+                {rankedOpportunities.slice(0, 4).map((opp) => (
                   <OpportunityCard key={opp.id} opp={opp} compact onQuote={openQuote} />
                 ))}
               </div>
@@ -526,14 +612,26 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
         <div className="panel-card">
           <div className="panel-header">
             <span className="panel-title"><ShoppingBag className="w-5 h-5 text-blue" /> Open Sourcing Bidding Opportunities</span>
+            <div className="vendor-priority-filters">
+              {['ALL', ...PRIORITIES].map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  className={`btn btn-sm ${priorityFilter === level ? 'btn-primary' : 'btn-outline'}`}
+                  onClick={() => setPriorityFilter(level)}
+                >
+                  {level === 'ALL' ? 'All' : level}
+                </button>
+              ))}
+            </div>
           </div>
-          {opportunities.length === 0 ? (
+          {visibleOpportunities.length === 0 ? (
             <div className="empty-state">
-              <p>No open RFQs available. Submitted items now appear under My Quotes.</p>
+              <p>{rankedOpportunities.length === 0 ? 'No open RFQs available. Submitted items now appear under My Quotes.' : `No ${priorityFilter.toLowerCase()} RFQs right now.`}</p>
             </div>
           ) : (
             <div className="vendor-rfq-grid">
-              {opportunities.map((opp) => (
+              {visibleOpportunities.map((opp) => (
                 <OpportunityCard key={opp.id} opp={opp} onQuote={openQuote} />
               ))}
             </div>
@@ -552,13 +650,15 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
             </div>
           ) : (
             <div className="table-responsive">
-              <table className="custom-table">
+              <table className="custom-table table-stack">
                 <thead>
                   <tr>
                     <th>Quotation ID</th>
                     <th>Procurement Ref</th>
                     <th>Item</th>
+                    <th>Priority</th>
                     <th>Photos</th>
+                    <th>Guide / Manual</th>
                     <th className="text-right">Total Price</th>
                     <th>Delivery</th>
                     <th>Status</th>
@@ -568,12 +668,15 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                 <tbody>
                   {savedQuotes.map((q) => (
                     <tr key={q.id}>
-                      <td className="font-mono text-xs text-blue font-bold">{q.id}</td>
-                      <td className="font-mono text-xs text-secondary">{q.procurementId}</td>
-                      <td>
+                      <td data-label="Quotation ID" className="font-mono text-xs text-blue font-bold">{q.id}</td>
+                      <td data-label="Procurement Ref" className="font-mono text-xs text-secondary">{q.procurementId}</td>
+                      <td data-label="Item">
                         <ItemIdentity src={q.imageUrl} name={q.item} extra={`x${q.quantity}`} />
                       </td>
-                      <td>
+                      <td data-label="Priority">
+                        <span className={`badge ${priorityBadgeClass(q.priority)}`}>{normalizePriority(q.priority)}</span>
+                      </td>
+                      <td data-label="Photos">
                         {q.itemPhotoUrls?.length ? (
                           <div className="quote-photo-strip">
                             {q.itemPhotoUrls.map((url) => (
@@ -584,12 +687,21 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                           <span className="quote-photo-empty">None</span>
                         )}
                       </td>
-                      <td className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
-                      <td className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
-                      <td>
+                      <td data-label="Guide / Manual">
+                        {q.manualFileUrl ? (
+                          <a href={q.manualFileUrl} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm">
+                            <BookOpen className="w-3.5 h-3.5" /> View
+                          </a>
+                        ) : (
+                          <span className="quote-photo-empty">None</span>
+                        )}
+                      </td>
+                      <td data-label="Total Price" className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
+                      <td data-label="Delivery" className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
+                      <td data-label="Status">
                         <span className={`badge badge-${quoteBadgeClass(q.status)}`}>{q.status}</span>
                       </td>
-                      <td className="text-right">
+                      <td data-label="Action" className="text-right table-stack-actions">
                         {q.canEdit && (
                           <button type="button" onClick={() => openEditQuote(q)} className="btn btn-outline btn-sm">
                             <Pencil className="w-3.5 h-3.5" /> Edit
@@ -610,40 +722,48 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           <div className="panel-header">
             <span className="panel-title"><CheckCircle2 className="w-5 h-5 text-success" /> Confirmed Purchase Orders</span>
           </div>
-          {purchaseOrders.length === 0 ? (
+          {rankedPurchaseOrders.length === 0 ? (
             <div className="empty-state">
               <p>No awarded purchase orders yet.</p>
             </div>
           ) : (
             <div className="table-responsive">
-              <table className="custom-table">
+              <table className="custom-table table-stack">
                 <thead>
                   <tr>
                     <th>PO Number</th>
+                    <th>Priority</th>
                     <th>Total Cost</th>
                     <th>Delivery Date</th>
+                    <th>Confirm by</th>
                     <th>Finance Status</th>
                     <th>PO Status</th>
                     <th className="text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseOrders.map((po) => (
+                  {rankedPurchaseOrders.map((po) => (
                     <tr key={po.poNumber}>
-                      <td className="font-mono text-xs text-blue font-bold">{po.poNumber}</td>
-                      <td className="font-mono text-xs text-success font-bold">₱{Number(po.totalCost).toLocaleString()}</td>
-                      <td className="text-xs text-secondary">{po.deliveryDate}</td>
-                      <td>
+                      <td data-label="PO Number" className="font-mono text-xs text-blue font-bold">{po.poNumber}</td>
+                      <td data-label="Priority">
+                        <span className={`badge ${priorityBadgeClass(po.priority)}`}>{normalizePriority(po.priority)}</span>
+                      </td>
+                      <td data-label="Total Cost" className="font-mono text-xs text-success font-bold">₱{Number(po.totalCost).toLocaleString()}</td>
+                      <td data-label="Delivery Date" className="text-xs text-secondary">{formatDisplayDate(po.deliveryDate) || po.deliveryDate}</td>
+                      <td data-label="Confirm by" className="text-xs text-secondary">
+                        {po.poStatus === 'Sent to Supplier' && po.confirmBy ? formatDisplayDate(po.confirmBy) : '—'}
+                      </td>
+                      <td data-label="Finance Status">
                         <span className={`badge badge-${po.financeApprovalStatus.toLowerCase().replace(/ /g, '-')}`}>
                           {po.financeApprovalStatus}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="PO Status">
                         <span className={`badge badge-${po.poStatus.toLowerCase().replace(/ /g, '-')}`}>
                           {po.poStatus}
                         </span>
                       </td>
-                      <td className="text-right">
+                      <td data-label="Action" className="text-right table-stack-actions">
                         {po.poStatus === 'Sent to Supplier' && (
                           <button onClick={() => supplierConfirmPO(po.poNumber)} className="btn btn-success btn-sm">
                             Confirm & Schedule Shipment
@@ -669,18 +789,47 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           size="md"
           title={editingQuote ? `Edit Quotation — ${editingQuote.id}` : `Submit RFQ Quotation — ${selectedOpp.id}`}
           subtitle={editingQuote
-            ? 'Update pricing, lead time, warranty coverage, and item photos before a supplier is selected.'
-            : 'Enter unit price, lead time, warranty coverage, and 1 to 3 photos of the actual item.'}
+            ? 'Update pricing, lead time, optional warranty, item photos, and an optional guide or manual before a supplier is selected.'
+            : 'Enter unit price, lead time, and 1 to 3 photos of the actual item. Warranty coverage and a guide or manual are optional.'}
           footer={(
             <>
               <button type="button" onClick={closeQuoteModal} className="btn btn-outline btn-sm">Cancel</button>
-              <button type="submit" className="btn btn-primary btn-sm" disabled={actionLoading || photoBusy || warrantyBusy}>
-                {actionLoading || warrantyBusy ? 'Uploading…' : (editingQuote ? 'Save Changes' : 'Submit Quotation')}
+              <button type="submit" className="btn btn-primary btn-sm" disabled={actionLoading || filesBusy}>
+                {actionLoading || warrantyBusy || manualBusy ? 'Uploading…' : (editingQuote ? 'Save Changes' : 'Submit Quotation')}
               </button>
             </>
           )}
         >
           {actionError ? <p className="quote-photo-error">{actionError}</p> : null}
+
+          {quoteOverdue ? (
+            <div className="quote-priority-banner is-urgent">
+              <AlertTriangle className="w-4 h-4" />
+              <div>
+                <strong>RFQ deadline has passed</strong>
+                <p>
+                  Quote by was {formatDisplayDate(quoteDeadline)}. You can still submit — TripWise keeps the request
+                  open until a quotation is awarded.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {quotePriority !== 'NORMAL' ? (
+            <div className={`quote-priority-banner is-${quotePriority.toLowerCase()}`}>
+              <AlertTriangle className="w-4 h-4" />
+              <div>
+                <strong>{quotePriority} request</strong>
+                <p>
+                  {quotePriority === 'URGENT'
+                    ? 'Operations cannot wait. Fastest delivery is preferred over lowest price.'
+                    : 'Quote soon and prefer a shorter lead time where you can.'}
+                  {quoteDeadline ? ` Quote by ${formatDisplayDate(quoteDeadline)}.` : ''}
+                  {quoteNeededBy ? ` Need item by ${formatDisplayDate(quoteNeededBy)}.` : ''}
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           <div className="modal-hero">
             <ItemThumb
@@ -695,6 +844,9 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
               <h4>{editingQuote ? editingQuote.item : (selectedOpp.itemName || selectedOpp.title)}</h4>
               <div className="modal-chip-row">
                 <span className="modal-chip">Qty: {quoteQty}</span>
+                <span className={`badge ${priorityBadgeClass(quotePriority)}`}>{quotePriority}</span>
+                {quoteNeededBy ? <span className="modal-chip">Need item by {formatDisplayDate(quoteNeededBy)}</span> : null}
+                {quoteDeadline ? <span className="modal-chip">Quote by {formatDisplayDate(quoteDeadline)}</span> : null}
                 <span className="modal-chip">{user?.supplierName || 'Vendor account'}</span>
               </div>
             </div>
@@ -714,24 +866,34 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           </div>
 
           <div className="grid-2">
-            <div className="form-group">
+            <div className={`form-group ${quotePriority === 'URGENT' ? 'is-urgent-field' : ''}`}>
               <label className="form-label">Delivery lead time (days)</label>
               <input
                 type="number"
                 required
+                min="1"
                 className="form-control"
                 value={quoteForm.deliveryTimeDays}
                 onChange={(e) => setQuoteForm({ ...quoteForm, deliveryTimeDays: e.target.value })}
               />
+              {quotePriority === 'URGENT' ? (
+                <p className="item-photo-hint">Fastest realistic delivery wins this RFQ.</p>
+              ) : null}
+              {deliveryTooSlow ? (
+                <p className="quote-photo-error">
+                  This lead time is longer than TripWise prefers for {quotePriority} stock
+                  {maxDeliveryDays ? ` (${maxDeliveryDays} days or faster)` : ''}. You can still submit.
+                </p>
+              ) : null}
             </div>
             <div className="form-group">
               <label className="form-label">Warranty coverage</label>
               <select
-                required
                 className="form-select"
                 value={quoteForm.warrantyMonths}
                 onChange={(e) => setQuoteForm({ ...quoteForm, warrantyMonths: e.target.value })}
               >
+                <option value="">None</option>
                 {[6, 12, 18, 24, 36, 48, 60].map((m) => (
                   <option key={m} value={m}>{m} months</option>
                 ))}
@@ -760,26 +922,31 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
             onRemoveNew={removeNewPhoto}
           />
 
-          <div className="form-group">
-            <label className="form-label">Warranty certificate (PDF or image)</label>
-            <input
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png,.webp"
-              className="form-control"
-              disabled={warrantyBusy || actionLoading}
-              onChange={(e) => {
-                attachWarranty(e.target.files?.[0] || null);
-                e.target.value = '';
-              }}
-            />
-            <p className="item-photo-hint">
-              PDF or image. Oversized files are reduced automatically, or sent in smaller pieces if they still exceed the server limit.
-            </p>
-            {warrantyHint ? <p className="item-photo-hint">{warrantyHint}</p> : null}
-            {editingQuote?.warrantyFileUrl && !quoteForm.warrantyFile && (
-              <p className="text-xs text-slate-400 mt-1">A certificate is already on file. Choose a new file to replace it.</p>
-            )}
-          </div>
+          <QuoteFileField
+            label="Warranty certificate (optional)"
+            hint="Optional. PDF or image. Attach only if this offer includes a warranty certificate."
+            accept=".pdf,.jpg,.jpeg,.png,.webp"
+            busy={warrantyBusy}
+            disabled={actionLoading}
+            fileHint={warrantyHint}
+            existingUrl={editingQuote?.warrantyFileUrl}
+            existingLabel="A certificate"
+            selectedFile={quoteForm.warrantyFile}
+            onChange={(file) => attachOptionalFile(file, 'warrantyFile', setWarrantyBusy, setWarrantyHint)}
+          />
+
+          <QuoteFileField
+            label="Guide / manual (optional)"
+            hint="Optional. PDF or image of the product guide or manual, if the item has one."
+            accept=".pdf,.jpg,.jpeg,.png,.webp"
+            busy={manualBusy}
+            disabled={actionLoading}
+            fileHint={manualHint}
+            existingUrl={editingQuote?.manualFileUrl}
+            existingLabel="A guide / manual"
+            selectedFile={quoteForm.manualFile}
+            onChange={(file) => attachOptionalFile(file, 'manualFile', setManualBusy, setManualHint)}
+          />
 
           <div className="form-group">
             <label className="form-label">Special notes / specifications</label>

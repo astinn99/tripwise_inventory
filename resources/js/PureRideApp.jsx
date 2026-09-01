@@ -104,6 +104,8 @@ function InternalApp() {
         activeTab,
         activeModal,
         setActiveModal,
+        sidebarOpen,
+        setSidebarOpen,
     } = useApp();
 
     if (bootError) {
@@ -127,6 +129,14 @@ function InternalApp() {
 
     return (
         <div className="app-shell">
+            {sidebarOpen ? (
+                <button
+                    type="button"
+                    className="sidebar-backdrop"
+                    aria-label="Close navigation"
+                    onClick={() => setSidebarOpen(false)}
+                />
+            ) : null}
             <Sidebar />
 
             <div className="main-wrapper">

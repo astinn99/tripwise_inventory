@@ -80,7 +80,7 @@ return new class extends Migration
             $table->string('category')->nullable();
             $table->unsignedInteger('quantity_requested');
             $table->date('required_date')->nullable();
-            $table->string('priority', 32)->default('MEDIUM')->index();
+            $table->string('priority', 32)->default('NORMAL')->index();
             $table->string('stock_availability', 64)->nullable();
             $table->string('status', 64)->default('Pending')->index();
             $table->string('requested_by')->nullable();
@@ -107,7 +107,7 @@ return new class extends Migration
             $table->string('item_name');
             $table->unsignedInteger('quantity');
             $table->text('reason')->nullable();
-            $table->string('priority', 32)->default('MEDIUM')->index();
+            $table->string('priority', 32)->default('NORMAL')->index();
             $table->string('status', 64)->default('For Procurement')->index();
             $table->date('date_created')->nullable();
             $table->decimal('estimated_cost', 12, 2)->default(0);

@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { BrandLogo } from '../components/layout/BrandLogo';
+import { EmailOtpForm } from '../components/ui/EmailOtpForm';
+import { useApp } from '../context/AppContext';
 import { api, ApiError } from '../services/api';
+import { normalizeOtpChallenge } from '../services/otp';
 
 const CATEGORIES = [
     'Office Supplies',
@@ -44,12 +47,14 @@ const FileField = ({ id, label, hint, file, onChange, accept = '.pdf,.jpg,.jpeg,
     </div>
 );
 
-export const VendorRegister = ({ onCancel, onRegistered }) => {
+export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
+    const { acceptSession } = useApp();
     const [form, setForm] = useState(emptyForm);
     const [permitFile, setPermitFile] = useState(null);
     const [secFile, setSecFile] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [challenge, setChallenge] = useState(null);
 
     const setField = (key, value) => {
         setForm((current) => ({ ...current, [key]: value }));
@@ -96,8 +101,16 @@ export const VendorRegister = ({ onCancel, onRegistered }) => {
 
         setSubmitting(true);
         try {
-            await api.post('/api/vendor/register', payload, { portal: 'vendor', timeout: 60000 });
-            onRegistered?.(form.email);
+            const result = normalizeOtpChallenge(await api.post('/api/vendor/register', payload, {
+                portal: 'vendor',
+                timeout: 90000,
+            }));
+            if (!result?.challengeId) {
+                setError('Registration was saved, but we could not start email verification. Sign in to request a new code.');
+                return;
+            }
+            setChallenge(result);
+            onAwaitingOtp?.(true);
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : 'Unable to submit registration.');
         } finally {
@@ -105,12 +118,52 @@ export const VendorRegister = ({ onCancel, onRegistered }) => {
         }
     };
 
+    const handleVerify = async (code) => {
+        setError('');
+        setSubmitting(true);
+        try {
+            const payload = await api.post('/api/vendor/register/verify', {
+                challengeId: challenge.challengeId,
+                code,
+            }, { portal: 'vendor' });
+            if (payload?.token) {
+                acceptSession(payload, 'vendor');
+                return;
+            }
+            onRegistered?.(form.email);
+        } catch (caught) {
+            setError(caught instanceof ApiError ? caught.message : 'Unable to verify that code.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleResend = () => api.post('/api/vendor/register/resend', {
+        challengeId: challenge.challengeId,
+    }, { portal: 'vendor' });
+
     return (
-        <div className="login-card login-card-register">
+        <div className={`login-card login-card-register${challenge ? ' login-card-otp' : ''}`}>
             <div className="login-brand">
                 <BrandLogo variant="login" subtitle="Vendor Portal" />
             </div>
 
+            {challenge ? (
+                <EmailOtpForm
+                    title="Verify your email"
+                    description="We sent a verification code to your registered address"
+                    emailMasked={challenge.emailMasked}
+                    submitting={submitting}
+                    error={error}
+                    resendIn={challenge.resendIn ?? 60}
+                    submitLabel="Verify and open portal"
+                    onSubmit={handleVerify}
+                    onResend={handleResend}
+                    onBack={onCancel}
+                    backLabel="Back to sign in"
+                />
+            ) : (
+                <>
             <h2 className="page-title">Register your company</h2>
             <p className="page-description">
                 Submit legal, contact, and banking details so supply chain can review your vendor account.
@@ -331,6 +384,8 @@ export const VendorRegister = ({ onCancel, onRegistered }) => {
                     Sign in
                 </button>
             </p>
+                </>
+            )}
         </div>
     );
 };

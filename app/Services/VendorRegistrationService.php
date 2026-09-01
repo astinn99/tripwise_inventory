@@ -30,13 +30,15 @@ class VendorRegistrationService
                 'bank_details' => $this->formatBankDetails($data),
             ]);
 
-            User::query()->create([
+            $user = User::query()->create([
                 'name' => $data['contactPerson'],
                 'email' => $data['email'],
                 'password' => $data['password'],
                 'role' => User::ROLE_SUPPLIER,
                 'supplier_id' => $supplier->id,
             ]);
+
+            $user->forceFill(['email_verified_at' => null])->save();
 
             $this->storeCredential(
                 $supplier,

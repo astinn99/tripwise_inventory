@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { FileCheck, DollarSign } from 'lucide-react';
+import { normalizePriority, priorityBadgeClass, sortByPriority } from '../services/priority';
 
 export const PurchaseOrders = () => {
   const {
@@ -11,11 +12,11 @@ export const PurchaseOrders = () => {
   } = useApp();
 
   const query = searchQuery.toLowerCase();
-  const filteredPOs = purchaseOrders.filter((po) => {
-    const haystack = [po.poNumber, po.supplier, po.budgetReference, po.poStatus]
+  const filteredPOs = sortByPriority(purchaseOrders.filter((po) => {
+    const haystack = [po.poNumber, po.supplier, po.budgetReference, po.poStatus, po.priority]
       .map((value) => String(value || '').toLowerCase());
     return haystack.some((value) => value.includes(query));
-  });
+  }), 'confirmBy');
 
   return (
     <div className="purchase-orders-page">
@@ -43,6 +44,7 @@ export const PurchaseOrders = () => {
             <thead>
               <tr>
                 <th>PO Number</th>
+                <th>Priority</th>
                 <th>Supplier</th>
                 <th>Items Ordered</th>
                 <th>Total Cost</th>
@@ -56,6 +58,9 @@ export const PurchaseOrders = () => {
               {filteredPOs.map(po => (
                 <tr key={po.poNumber}>
                   <td className="font-mono text-xs text-blue font-bold">{po.poNumber}</td>
+                  <td>
+                    <span className={`badge ${priorityBadgeClass(po.priority)}`}>{normalizePriority(po.priority)}</span>
+                  </td>
                   <td>
                     <div className="font-bold text-xs text-primary">{po.supplier}</div>
                     <div className="text-xs text-secondary">{po.contactPerson}</div>

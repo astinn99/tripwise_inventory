@@ -98,7 +98,7 @@ export default function DashboardCharts({
               <BarChart data={poStatusData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
                 <XAxis type="number" stroke="#000000" tick={{ fill: '#000000' }} />
-                <YAxis dataKey="status" type="category" stroke="#000000" width={100} tick={{ fontSize: 11, fill: '#000000', fontWeight: 700 }} />
+                <YAxis dataKey="status" type="category" stroke="#000000" width={72} tick={{ fontSize: 10, fill: '#000000', fontWeight: 700 }} />
                 <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
                 <Bar dataKey="count" fill="#1D4ED8" radius={[0, 4, 4, 0]} />
               </BarChart>

@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api, ApiError, fileToBase64, getAuthToken, getBootstrap, getBootstrapMore, getCachedUser, invalidateBootstrap, readBootstrapCache, resetCsrf, setAuthToken, setCachedUser, writeBootstrapCache } from '../services/api';
+import { api, ApiError, expireLocalAuth, fetchCurrentUser, fileToBase64, getAuthToken, getBootstrap, getBootstrapMore, getCachedUser, invalidateBootstrap, readBootstrapCache, resetCsrf, setAuthToken, setCachedUser, writeBootstrapCache } from '../services/api';
+import { SESSION_EXPIRED_KEY, shouldExpireSession, subscribeToActivity, touchActivity } from '../services/session';
 import { compressImageFile } from '../services/images';
 import { prefetchItemImages } from '../components/ui/ItemThumb';
 import { createEcho } from '../echo';
+import { normalizeOtpChallenge } from '../services/otp';
 
 const AppContext = createContext();
 
@@ -108,8 +110,14 @@ const quotationUploadGet = (params, signal) => (
     api.get(quoteUploadQuery(params), { signal, timeout: QUOTE_REQUEST_TIMEOUT })
 );
 
+const documentFallbackName = (kind) => {
+    if (kind === 'warranty') return 'warranty.pdf';
+    if (kind === 'manual') return 'manual.pdf';
+    return 'photo.jpg';
+};
+
 const uploadViaGetChunks = async (file, kind, signal) => {
-    const fileName = file.name || (kind === 'warranty' ? 'warranty.pdf' : 'photo.jpg');
+    const fileName = file.name || documentFallbackName(kind);
     const started = await quotationUploadGet({ step: 'start', kind, fileName }, signal);
     const bytes = new Uint8Array(await file.arrayBuffer());
 
@@ -125,14 +133,26 @@ const uploadViaGetChunks = async (file, kind, signal) => {
     return quotationUploadGet({ step: 'finish', uploadId: started.uploadId }, signal);
 };
 
-const quotationPayload = async ({ warrantyFile, itemPhotos, keepItemPhotos, ...payload }, signal) => {
+const attachQuotedDocument = async (next, file, kind, tokenKey, base64Key, nameKey, signal) => {
+    if (!(file instanceof File)) {
+        return;
+    }
+
+    const prepared = await prepareQuoteFile(file);
+    if (prepared.size > QUOTE_JSON_MAX_BYTES) {
+        next[tokenKey] = (await uploadViaGetChunks(prepared, kind, signal)).token;
+        return;
+    }
+
+    next[base64Key] = await fileToBase64(prepared);
+    next[nameKey] = prepared.name || documentFallbackName(kind);
+};
+
+const quotationPayload = async ({ warrantyFile, manualFile, itemPhotos, keepItemPhotos, ...payload }, signal) => {
     const photos = [];
     for (const photo of (itemPhotos || []).filter((item) => item instanceof File)) {
         photos.push(await prepareQuoteFile(photo));
     }
-    const warranty = warrantyFile instanceof File
-        ? await prepareQuoteFile(warrantyFile)
-        : null;
 
     const next = { ...payload };
 
@@ -151,14 +171,8 @@ const quotationPayload = async ({ warrantyFile, itemPhotos, keepItemPhotos, ...p
         }
     }
 
-    if (warranty) {
-        if (warranty.size > QUOTE_JSON_MAX_BYTES) {
-            next.warrantyToken = (await uploadViaGetChunks(warranty, 'warranty', signal)).token;
-        } else {
-            next.warrantyFileBase64 = await fileToBase64(warranty);
-            next.warrantyFileName = warranty.name || 'warranty.pdf';
-        }
-    }
+    await attachQuotedDocument(next, warrantyFile, 'warranty', 'warrantyToken', 'warrantyFileBase64', 'warrantyFileName', signal);
+    await attachQuotedDocument(next, manualFile, 'manual', 'manualToken', 'manualFileBase64', 'manualFileName', signal);
 
     if (Array.isArray(keepItemPhotos)) {
         next.keepItemPhotos = keepItemPhotos;
@@ -172,6 +186,7 @@ const quoteQueryString = (payload) => {
     [
         'procurementId', 'item', 'quantity', 'unitPrice', 'totalPrice',
         'warranty', 'warrantyMonths', 'warrantyToken', 'warrantyFileName',
+        'manualToken', 'manualFileName',
         'deliveryTimeDays', 'qualityRating', 'paymentTerms', 'notes',
         'supplierId', 'supplierName',
     ].forEach((key) => {
@@ -208,10 +223,12 @@ const postQuotation = async (path, quoteData, signal, preferPut = false) => {
 
         const photos = (quoteData.itemPhotos || []).filter((item) => item instanceof File);
         const warranty = quoteData.warrantyFile instanceof File ? quoteData.warrantyFile : null;
+        const manual = quoteData.manualFile instanceof File ? quoteData.manualFile : null;
         const retry = { ...payload };
         delete retry.itemPhotosBase64;
         delete retry.itemPhotoNames;
         delete retry.warrantyFileBase64;
+        delete retry.manualFileBase64;
 
         if (photos.length > 0) {
             retry.itemPhotoTokens = [];
@@ -221,6 +238,9 @@ const postQuotation = async (path, quoteData, signal, preferPut = false) => {
         }
         if (warranty) {
             retry.warrantyToken = (await uploadViaGetChunks(await prepareQuoteFile(warranty), 'warranty', signal)).token;
+        }
+        if (manual) {
+            retry.manualToken = (await uploadViaGetChunks(await prepareQuoteFile(manual), 'manual', signal)).token;
         }
 
         return api.post(`${path}?${quoteQueryString(retry)}`, retry, { signal, timeout: QUOTE_REQUEST_TIMEOUT });
@@ -467,6 +487,7 @@ export const AppProvider = ({ children }) => {
     const portal = isVendorPortal ? 'vendor' : 'internal';
 
     const [activeTab, setActiveTab] = useState('dashboard');
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [internalUser, setInternalUser] = useState(() => getCachedUser('internal'));
     const [vendorUser, setVendorUser] = useState(() => getCachedUser('vendor'));
@@ -792,7 +813,7 @@ export const AppProvider = ({ children }) => {
             }
 
             try {
-                const current = await api.get('/api/user', { portal });
+                const current = await fetchCurrentUser(portal);
                 if (cancelled) return;
                 const nextUser = applyUser(current, portal);
                 setBootLoading(false);
@@ -803,8 +824,9 @@ export const AppProvider = ({ children }) => {
                 if (cancelled) return;
                 setBootLoading(false);
                 if (error instanceof ApiError && error.status === 401) {
-                    setAuthToken('', portal);
-                    setPortalUser(null, portal);
+                    expireLocalAuth();
+                    setInternalUser(null);
+                    setVendorUser(null);
                     setCollections(emptyCollections);
                 } else if (!cached) {
                     setBootError(error.message || 'Unable to load the application.');
@@ -1009,9 +1031,7 @@ export const AppProvider = ({ children }) => {
         };
     }, [user?.id, portal]);
 
-    const login = async (email, password, targetPortal = portal) => {
-        resetCsrf();
-        const payload = await api.post('/api/login', { email, password, portal: targetPortal }, { portal: targetPortal });
+    const completeSession = (payload, targetPortal) => {
         setAuthToken(payload.token, targetPortal);
         invalidateBootstrap();
         moreRequestedRef.current = false;
@@ -1026,6 +1046,27 @@ export const AppProvider = ({ children }) => {
         return current;
     };
 
+    const login = async (email, password, targetPortal = portal) => {
+        resetCsrf();
+        const payload = await api.post('/api/login', { email, password, portal: targetPortal }, { portal: targetPortal });
+        const challenge = normalizeOtpChallenge(payload);
+        if (challenge) {
+            return challenge;
+        }
+        return completeSession(payload, targetPortal);
+    };
+
+    const verifyLoginOtp = async (challengeId, code, targetPortal = portal) => {
+        const payload = await api.post('/api/login/otp', { challengeId, code }, { portal: targetPortal });
+        return completeSession(payload, targetPortal);
+    };
+
+    const resendLoginOtp = async (challengeId, targetPortal = portal) => {
+        return api.post('/api/login/otp/resend', { challengeId }, { portal: targetPortal });
+    };
+
+    const acceptSession = (payload, targetPortal = portal) => completeSession(payload, targetPortal);
+
     const logout = async () => {
         try {
             await api.post('/api/logout', {}, { portal });
@@ -1037,11 +1078,106 @@ export const AppProvider = ({ children }) => {
             setPortalUser(null, portal);
             setCollections(emptyCollections);
             setActiveTab('dashboard');
+            setSidebarOpen(false);
             moreRequestedRef.current = false;
             liveStampsRef.current = {};
             coreReadyRef.current = false;
         }
     };
+
+    const expireAllSessions = async () => {
+        await Promise.all(['internal', 'vendor'].map(async (target) => {
+            if (!getAuthToken(target)) {
+                return;
+            }
+
+            try {
+                await api.post('/api/logout', {}, { portal: target });
+            } catch {
+                // Token may already be invalid after shutdown or idle expiry.
+            }
+        }));
+
+        echoRef.current?.disconnect();
+        echoRef.current = null;
+        resetCsrf();
+        expireLocalAuth();
+        setInternalUser(null);
+        setVendorUser(null);
+        setCollections(emptyCollections);
+        setActiveTab('dashboard');
+        moreRequestedRef.current = false;
+        liveStampsRef.current = {};
+        coreReadyRef.current = false;
+    };
+
+    const expireAllSessionsRef = useRef(expireAllSessions);
+    expireAllSessionsRef.current = expireAllSessions;
+
+    useEffect(() => {
+        if (!internalUser && !vendorUser) {
+            return undefined;
+        }
+
+        const expiring = { current: false };
+        const expire = () => {
+            if (expiring.current) {
+                return;
+            }
+
+            expiring.current = true;
+            void expireAllSessionsRef.current();
+        };
+
+        const onActivity = () => {
+            if (shouldExpireSession()) {
+                void expire();
+                return;
+            }
+
+            touchActivity();
+        };
+
+        const stopActivity = subscribeToActivity(onActivity);
+        const intervalId = window.setInterval(() => {
+            if (shouldExpireSession()) {
+                void expire();
+            }
+        }, 15000);
+
+        const onResume = () => {
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+
+            if (shouldExpireSession()) {
+                void expire();
+            }
+        };
+
+        const onStorage = (event) => {
+            if (event.key === SESSION_EXPIRED_KEY && event.newValue) {
+                echoRef.current?.disconnect();
+                echoRef.current = null;
+                setInternalUser(null);
+                setVendorUser(null);
+                setCollections(emptyCollections);
+                setActiveTab('dashboard');
+            }
+        };
+
+        document.addEventListener('visibilitychange', onResume);
+        window.addEventListener('focus', onResume);
+        window.addEventListener('storage', onStorage);
+
+        return () => {
+            stopActivity();
+            window.clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', onResume);
+            window.removeEventListener('focus', onResume);
+            window.removeEventListener('storage', onStorage);
+        };
+    }, [internalUser, vendorUser]);
 
     const pauseLiveSync = () => {
         livePauseUntilRef.current = Date.now() + 2000;
@@ -1432,8 +1568,8 @@ export const AppProvider = ({ children }) => {
             }),
         });
 
-    const createManualProcurementRequest = (itemCode, quantity, reason, priority) =>
-        runAction(() => api.post('/api/procurement-requests', { itemCode, quantity, reason, priority }), {
+    const createManualProcurementRequest = (itemCode, quantity, reason, priority, neededInDays) =>
+        runAction(() => api.post('/api/procurement-requests', { itemCode, quantity, reason, priority, neededInDays }), {
             optimistic: (prev) => {
                 const item = prev.inventory.find((row) => row.itemCode === itemCode);
                 return {
@@ -1445,6 +1581,7 @@ export const AppProvider = ({ children }) => {
                         quantity,
                         reason,
                         priority,
+                        neededInDays,
                         status: 'For Procurement',
                         canEdit: true,
                         sentToVendors: false,
@@ -1547,10 +1684,36 @@ export const AppProvider = ({ children }) => {
 
     const openTab = (tab) => {
         setActiveTab(tab);
+        setSidebarOpen(false);
         if (MORE_TABS.has(tab)) {
             loadMoreCollections();
         }
     };
+
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') {
+                setSidebarOpen(false);
+            }
+        };
+        const onResize = () => {
+            if (window.innerWidth > 1024) {
+                setSidebarOpen(false);
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('resize', onResize);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('resize', onResize);
+        };
+    }, []);
+
+    useEffect(() => {
+        document.body.classList.toggle('sidebar-drawer-open', sidebarOpen);
+        return () => document.body.classList.remove('sidebar-drawer-open');
+    }, [sidebarOpen]);
 
     return (
         <AppContext.Provider value={{
@@ -1562,6 +1725,8 @@ export const AppProvider = ({ children }) => {
             actionLoading,
             activeTab,
             setActiveTab: openTab,
+            sidebarOpen,
+            setSidebarOpen,
             searchQuery,
             setSearchQuery,
             ...collections,
@@ -1570,6 +1735,9 @@ export const AppProvider = ({ children }) => {
             modalData,
             setModalData,
             login,
+            verifyLoginOtp,
+            resendLoginOtp,
+            acceptSession,
             logout,
             processSupplyRequestStock,
             selectSupplierAndCreatePO,

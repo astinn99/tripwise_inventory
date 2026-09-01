@@ -51,6 +51,18 @@ class User extends Authenticatable
         return $this->role === self::ROLE_SUPPLY_CHAIN;
     }
 
+    public function hasVerifiedEmail(): bool
+    {
+        return $this->email_verified_at !== null;
+    }
+
+    public function markEmailAsVerified(): bool
+    {
+        return $this->forceFill([
+            'email_verified_at' => $this->email_verified_at ?? now(),
+        ])->save();
+    }
+
     public function canManageAll(): bool
     {
         return $this->isInternal();

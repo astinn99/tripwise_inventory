@@ -1,30 +1,121 @@
 import React, { useState } from 'react';
+import { EmailOtpForm } from '../components/ui/EmailOtpForm';
 import { BrandLogo } from '../components/layout/BrandLogo';
 import { useApp } from '../context/AppContext';
+import { api, ApiError } from '../services/api';
+import { normalizeOtpChallenge } from '../services/otp';
 import { VendorRegister } from './VendorRegister';
 
 export const Login = ({ portal = 'internal' }) => {
-    const { login, actionError } = useApp();
+    const { login, verifyLoginOtp, resendLoginOtp, acceptSession, actionError } = useApp();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [localError, setLocalError] = useState('');
     const [view, setView] = useState('login');
+    const [step, setStep] = useState('password');
+    const [challenge, setChallenge] = useState(null);
     const [registeredEmail, setRegisteredEmail] = useState('');
+    const [infoMessage, setInfoMessage] = useState('');
+    const [registerAwaitingOtp, setRegisterAwaitingOtp] = useState(false);
     const isVendor = portal === 'vendor';
+
+    const resetChallenge = () => {
+        setStep('password');
+        setChallenge(null);
+        setLocalError('');
+    };
 
     const handleSubmit = async (event) => {
         event.preventDefault();
         setLocalError('');
+        setInfoMessage('');
         setSubmitting(true);
         try {
-            await login(email.trim(), password, portal);
+            const result = normalizeOtpChallenge(await login(email.trim(), password, portal));
+            if (result?.requiresEmailVerification) {
+                setChallenge(result);
+                setStep('verify-email');
+                return;
+            }
+            if (result?.requiresOtp || result?.challengeId) {
+                setChallenge(result);
+                setStep('otp');
+            }
         } catch (error) {
             setLocalError(error.message || 'Unable to sign in.');
         } finally {
             setSubmitting(false);
         }
     };
+
+    const handleLoginOtp = async (code) => {
+        setLocalError('');
+        setSubmitting(true);
+        try {
+            await verifyLoginOtp(challenge.challengeId, code, portal);
+        } catch (error) {
+            setLocalError(error.message || 'Unable to verify that code.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleVerifyEmail = async (code) => {
+        setLocalError('');
+        setSubmitting(true);
+        try {
+            const payload = await api.post('/api/vendor/register/verify', {
+                challengeId: challenge.challengeId,
+                code,
+            }, { portal: 'vendor' });
+            if (payload?.token) {
+                acceptSession(payload, 'vendor');
+                return;
+            }
+            setRegisteredEmail(email.trim());
+            setInfoMessage('Email verified. Sign in to continue.');
+            resetChallenge();
+        } catch (error) {
+            setLocalError(error instanceof ApiError ? error.message : 'Unable to verify that code.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleResendLogin = () => resendLoginOtp(challenge.challengeId, portal);
+
+    const handleResendRegister = () => api.post('/api/vendor/register/resend', {
+        challengeId: challenge.challengeId,
+    }, { portal: 'vendor' });
+
+    const otpCard = (
+        <div className="login-card">
+            <div className="login-brand">
+                <BrandLogo
+                    variant="login"
+                    subtitle={isVendor ? 'Vendor Portal' : 'Supply Chain'}
+                />
+            </div>
+            <EmailOtpForm
+                title={step === 'verify-email' ? 'Verify your email' : 'Check your email'}
+                description={
+                    step === 'verify-email'
+                        ? 'We sent a verification code to your registered address'
+                        : 'We sent a sign-in code to your registered address'
+                }
+                emailMasked={challenge?.emailMasked}
+                submitting={submitting}
+                error={localError || actionError}
+                resendIn={challenge?.resendIn ?? 60}
+                submitLabel={step === 'verify-email' ? 'Verify email' : 'Verify and sign in'}
+                onSubmit={step === 'verify-email' ? handleVerifyEmail : handleLoginOtp}
+                onResend={step === 'verify-email' ? handleResendRegister : handleResendLogin}
+                onBack={resetChallenge}
+                backLabel="Back to sign in"
+            />
+        </div>
+    );
 
     const form = (
         <div className="login-card">
@@ -42,10 +133,10 @@ export const Login = ({ portal = 'internal' }) => {
                     : 'Manage inventory, procurement, and warehouse operations.'}
             </p>
 
-            {registeredEmail && isVendor ? (
+            {infoMessage || (registeredEmail && isVendor) ? (
                 <div className="login-success">
                     <p className="text-xs font-bold">
-                        Registration submitted for {registeredEmail}. You can sign in while supply chain reviews your credentials.
+                        {infoMessage || `Email verified for ${registeredEmail}. Sign in while supply chain reviews your credentials.`}
                     </p>
                 </div>
             ) : null}
@@ -97,16 +188,25 @@ export const Login = ({ portal = 'internal' }) => {
         </div>
     );
 
+    const card = step === 'password' ? form : otpCard;
+
     if (isVendor) {
         if (view === 'register') {
             return (
-                <div className="login-screen login-screen-register">
+                <div className={`login-screen${registerAwaitingOtp ? '' : ' login-screen-register'}`}>
                     <VendorRegister
-                        onCancel={() => setView('login')}
+                        onCancel={() => {
+                            setRegisterAwaitingOtp(false);
+                            setView('login');
+                        }}
+                        onAwaitingOtp={setRegisterAwaitingOtp}
                         onRegistered={(nextEmail) => {
                             setRegisteredEmail(nextEmail);
                             setEmail(nextEmail);
                             setLocalError('');
+                            setInfoMessage('');
+                            setRegisterAwaitingOtp(false);
+                            resetChallenge();
                             setView('login');
                         }}
                     />
@@ -114,7 +214,7 @@ export const Login = ({ portal = 'internal' }) => {
             );
         }
 
-        return <div className="login-screen">{form}</div>;
+        return <div className="login-screen">{card}</div>;
     }
 
     return (
@@ -131,7 +231,7 @@ export const Login = ({ portal = 'internal' }) => {
                 </div>
             </aside>
             <div className="login-panel">
-                {form}
+                {card}
             </div>
         </div>
     );

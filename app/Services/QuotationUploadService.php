@@ -17,7 +17,7 @@ class QuotationUploadService
             'id' => $uploadId,
             'user_id' => $user->id,
             'kind' => $kind,
-            'file_name' => basename($fileName) ?: ($kind === 'warranty' ? 'warranty.pdf' : 'photo.jpg'),
+            'file_name' => basename($fileName) ?: $this->fallbackName($kind),
             'bytes' => 0,
         ]);
         file_put_contents($this->partPath($uploadId), '');
@@ -36,8 +36,7 @@ class QuotationUploadService
             ]);
         }
 
-        $maxBytes = $meta['kind'] === 'warranty' ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
-        if (($meta['bytes'] + strlen($chunk)) > $maxBytes) {
+        if (($meta['bytes'] + strlen($chunk)) > $this->maxBytes($meta['kind'])) {
             throw ValidationException::withMessages([
                 'chunkBase64' => ['The file is larger than the allowed limit.'],
             ]);
@@ -81,7 +80,7 @@ class QuotationUploadService
         return $this->complete(
             $user,
             $kind,
-            $file->getClientOriginalName() ?: ($kind === 'warranty' ? 'warranty.pdf' : 'photo.jpg'),
+            $file->getClientOriginalName() ?: $this->fallbackName($kind),
             $contents
         );
     }
@@ -121,7 +120,7 @@ class QuotationUploadService
 
     private function storeCompleted(User $user, string $kind, string $fileName, string $contents): array
     {
-        $maxBytes = $kind === 'warranty' ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+        $maxBytes = $this->maxBytes($kind);
         if ($contents === '' || strlen($contents) > $maxBytes) {
             throw ValidationException::withMessages([
                 'file' => [$contents === '' ? 'The file upload is empty.' : 'The file is larger than the allowed limit.'],
@@ -129,7 +128,7 @@ class QuotationUploadService
         }
 
         $token = bin2hex(random_bytes(16));
-        $safeName = basename($fileName) ?: ($kind === 'warranty' ? 'warranty.pdf' : 'photo.jpg');
+        $safeName = basename($fileName) ?: $this->fallbackName($kind);
         $final = $this->tokenPath($token, $this->extension($safeName, $kind));
         file_put_contents($final, $contents);
 
@@ -150,9 +149,9 @@ class QuotationUploadService
 
     private function assertKind(string $kind): void
     {
-        if (! in_array($kind, ['photo', 'warranty'], true)) {
+        if (! in_array($kind, ['photo', 'warranty', 'manual'], true)) {
             throw ValidationException::withMessages([
-                'kind' => ['Upload kind must be photo or warranty.'],
+                'kind' => ['Upload kind must be photo, warranty, or manual.'],
             ]);
         }
     }
@@ -173,15 +172,40 @@ class QuotationUploadService
     private function extension(string $fileName, string $kind): string
     {
         $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION) ?: '');
-        $allowed = $kind === 'warranty'
-            ? ['pdf', 'jpg', 'jpeg', 'png', 'webp']
-            : ['jpg', 'jpeg', 'png', 'webp'];
+        $allowed = $this->allowedExtensions($kind);
 
         if (! in_array($extension, $allowed, true)) {
-            return $kind === 'warranty' ? 'pdf' : 'jpg';
+            return $this->isDocumentKind($kind) ? 'pdf' : 'jpg';
         }
 
         return $extension;
+    }
+
+    private function isDocumentKind(string $kind): bool
+    {
+        return in_array($kind, ['warranty', 'manual'], true);
+    }
+
+    private function fallbackName(string $kind): string
+    {
+        return match ($kind) {
+            'warranty' => 'warranty.pdf',
+            'manual' => 'manual.pdf',
+            default => 'photo.jpg',
+        };
+    }
+
+    private function maxBytes(string $kind): int
+    {
+        return $this->isDocumentKind($kind) ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+    }
+
+    /** @return list<string> */
+    private function allowedExtensions(string $kind): array
+    {
+        return $this->isDocumentKind($kind)
+            ? ['pdf', 'jpg', 'jpeg', 'png', 'webp']
+            : ['jpg', 'jpeg', 'png', 'webp'];
     }
 
     private function directory(): string

@@ -23,8 +23,12 @@ use App\Http\Controllers\Api\DepartmentSupplyApiController;
 use App\Http\Controllers\Api\VendorRegistrationController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+Route::post('/login/otp', [AuthController::class, 'verifyLoginOtp'])->middleware('throttle:10,1');
+Route::post('/login/otp/resend', [AuthController::class, 'resendLoginOtp'])->middleware('throttle:6,1');
 Route::post('/vendor/register', [VendorRegistrationController::class, 'store'])->middleware('throttle:6,1');
+Route::post('/vendor/register/verify', [VendorRegistrationController::class, 'verify'])->middleware('throttle:10,1');
+Route::post('/vendor/register/resend', [VendorRegistrationController::class, 'resend'])->middleware('throttle:6,1');
 
 Route::middleware('department')->prefix('department')->group(function () {
     Route::get('/items', [DepartmentSupplyApiController::class, 'items']);

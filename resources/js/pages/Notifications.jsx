@@ -39,10 +39,10 @@ export const Notifications = () => {
 
       {/* Filter Bar */}
       <div className="filter-bar">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Filter className="w-4 h-4 text-slate-400" />
           <span className="text-xs text-slate-400 font-bold uppercase">Severity Filter:</span>
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap">
             {['ALL', 'danger', 'warning', 'success', 'info'].map(sev => (
               <button
                 key={sev}

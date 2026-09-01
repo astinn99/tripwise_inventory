@@ -12,10 +12,17 @@ use App\Services\SupplyChainService;
 
 class ProcurementRequestController extends Controller
 {
-    public function index()
+    public function index(SupplyChainService $service)
     {
+        $service->flagOverdueRfqs();
+
         return $this->ok(ProcurementRequestResource::collection(
-            ProcurementRequest::query()->with('catalogItem')->withCount('opportunities')->orderByDesc('id')->get()
+            ProcurementRequest::query()
+                ->with('catalogItem')
+                ->withCount(['opportunities', 'quotations'])
+                ->withMin('opportunities', 'deadline')
+                ->orderByDesc('id')
+                ->get()
         ));
     }
 
@@ -26,7 +33,8 @@ class ProcurementRequestController extends Controller
             $item,
             (int) $request->validated('quantity'),
             $request->validated('reason'),
-            $request->validated('priority')
+            $request->validated('priority'),
+            $request->validated('neededInDays') !== null ? (int) $request->validated('neededInDays') : null
         );
 
         return $this->created(new ProcurementRequestResource($pr->loadCount('opportunities')), 'Procurement request created');

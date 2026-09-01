@@ -25,25 +25,54 @@ trait HydratesQuotationUploads
             $this->files->set('itemPhotos', $photos);
         }
 
-        if (! $this->file('warrantyFile') && is_string($this->input('warrantyToken')) && $this->input('warrantyToken') !== '') {
+        $this->hydrateNamedDocument(
+            $uploads,
+            $user,
+            'warrantyFile',
+            'warrantyToken',
+            'warrantyFileBase64',
+            'warrantyFileName',
+            'warranty_'
+        );
+        $this->hydrateNamedDocument(
+            $uploads,
+            $user,
+            'manualFile',
+            'manualToken',
+            'manualFileBase64',
+            'manualFileName',
+            'manual_'
+        );
+    }
+
+    private function hydrateNamedDocument(
+        QuotationUploadService $uploads,
+        $user,
+        string $fileKey,
+        string $tokenKey,
+        string $base64Key,
+        string $nameKey,
+        string $prefix
+    ): void {
+        if (! $this->file($fileKey) && is_string($this->input($tokenKey)) && $this->input($tokenKey) !== '') {
             $this->files->set(
-                'warrantyFile',
-                $uploads->toUploadedFile($this->input('warrantyToken'), $user, 'warrantyFile')
+                $fileKey,
+                $uploads->toUploadedFile($this->input($tokenKey), $user, $fileKey)
             );
         }
 
-        if (! $this->file('warrantyFile')) {
-            $warranty = Base64Upload::file(
-                $this->input('warrantyFileBase64'),
-                $this->input('warrantyFileName'),
-                'warrantyFile',
+        if (! $this->file($fileKey)) {
+            $file = Base64Upload::file(
+                $this->input($base64Key),
+                $this->input($nameKey),
+                $fileKey,
                 10 * 1024 * 1024,
                 ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
                 'pdf',
-                'warranty_'
+                $prefix
             );
-            if ($warranty) {
-                $this->files->set('warrantyFile', $warranty);
+            if ($file) {
+                $this->files->set($fileKey, $file);
             }
         }
     }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Bell, User } from 'lucide-react';
+import { Bell, Menu, User } from 'lucide-react';
 
 const pageMeta = {
   dashboard: { title: 'Dashboard', hint: 'Overview' },
@@ -17,7 +17,9 @@ export const VendorHeader = ({ activeTab = 'dashboard' }) => {
     markNotificationRead,
     markAllNotificationsRead,
     user,
-    logout
+    logout,
+    sidebarOpen,
+    setSidebarOpen,
   } = useApp();
 
   const [showNotifMenu, setShowNotifMenu] = useState(false);
@@ -27,13 +29,21 @@ export const VendorHeader = ({ activeTab = 'dashboard' }) => {
   return (
     <header className="app-header">
       <div className="header-left">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-sidebar"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          <Menu className="w-5 h-5" />
+        </button>
         <div>
           <span className="header-page-label">{meta.title}</span>
           <span className="header-page-hint">{meta.hint}</span>
         </div>
       </div>
-
-      <div className="header-center"></div>
 
       <div className="header-right">
         <div className="notif-dropdown-wrapper">

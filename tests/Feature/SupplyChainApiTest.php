@@ -667,6 +667,8 @@ class SupplyChainApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.quantity', 12)
             ->assertJsonPath('data.priority', 'HIGH')
+            ->assertJsonPath('data.neededInDays', 7)
+            ->assertJsonPath('data.quoteWindowDays', 5)
             ->assertJsonPath('data.reason', 'Updated restock quantity')
             ->assertJsonPath('data.canEdit', true);
 
@@ -821,6 +823,106 @@ class SupplyChainApiTest extends TestCase
         $this->assertNotNull(
             Quotation::query()->where('item', 'toktok')->value('warranty_file_path')
         );
+    }
+
+    public function test_vendor_can_submit_quotation_without_warranty_and_with_optional_manual(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-241', 'COM-241', 'INV-241');
+
+        $response = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('unit.jpg', 60, 60)],
+                'manualFileBase64' => base64_encode('%PDF-1.4 item manual'),
+                'manualFileName' => 'manual.pdf',
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonPath('data.warranty', null)
+            ->assertJsonPath('data.warrantyMonths', null)
+            ->assertJsonPath('data.warrantyFileUrl', null);
+
+        $quote = Quotation::query()->where('quote_number', $response->json('data.id'))->firstOrFail();
+        $this->assertNull($quote->warranty);
+        $this->assertNull($quote->warranty_months);
+        $this->assertNull($quote->warranty_file_path);
+        $this->assertNotNull($quote->manual_file_path);
+        Storage::disk('public')->assertExists($quote->manual_file_path);
+        $this->assertSame('/storage/'.$quote->manual_file_path, $response->json('data.manualFileUrl'));
+    }
+
+    public function test_vendor_can_clear_warranty_when_editing_a_quotation(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-242', 'COM-242', 'INV-242');
+
+        $quoteNumber = $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'warranty' => '1 year',
+                'warrantyMonths' => 12,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('unit.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonPath('data.warrantyMonths', 12)
+            ->json('data.id');
+
+        $this->actingAs($vendor)
+            ->putJson('/api/quotations/'.$quoteNumber, [
+                'unitPrice' => 1000,
+                'warranty' => '',
+                'warrantyMonths' => null,
+                'deliveryTimeDays' => 2,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.warranty', null)
+            ->assertJsonPath('data.warrantyMonths', null);
+    }
+
+    public function test_vendor_can_submit_quotation_with_chunked_manual_token(): void
+    {
+        Storage::fake('public');
+
+        [, $vendor, $prNumber] = $this->openRfqForVendor('SUP-243', 'COM-243', 'INV-243');
+
+        $photo = UploadedFile::fake()->image('unit.jpg', 40, 40);
+        $photoToken = $this->chunkUpload(
+            $vendor,
+            'photo',
+            'unit.jpg',
+            (string) file_get_contents($photo->getRealPath())
+        );
+        $manualToken = $this->chunkUpload($vendor, 'manual', 'manual.pdf', '%PDF-1.4 item manual');
+
+        $this->actingAs($vendor)
+            ->postJson('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'toktok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotoTokens' => [$photoToken],
+                'manualToken' => $manualToken,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.warrantyMonths', null);
+
+        $quote = Quotation::query()->where('item', 'toktok')->firstOrFail();
+        $this->assertNotNull($quote->manual_file_path);
+        Storage::disk('public')->assertExists($quote->manual_file_path);
     }
 
     public function test_vendor_can_submit_quotation_with_base64_item_photos(): void
@@ -1259,7 +1361,9 @@ class SupplyChainApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.poNumber', 'PO-2026-401')
             ->assertJsonPath('data.financeApprovalStatus', 'Finance Approved')
-            ->assertJsonPath('data.poStatus', 'Sent to Supplier');
+            ->assertJsonPath('data.poStatus', 'Sent to Supplier')
+            ->assertJsonPath('data.priority', 'NORMAL')
+            ->assertJsonPath('data.confirmBy', now()->addDays(3)->toDateString());
 
         $this->assertDatabaseHas('purchase_orders', [
             'po_number' => 'PO-2026-401',
@@ -1405,5 +1509,296 @@ class SupplyChainApiTest extends TestCase
         $this->assertSame('Receiving', $live['movements'][0]['movementType']);
         $this->assertSame('COM-001', $live['movements'][0]['itemCode']);
         $this->assertSame(10, $live['movements'][0]['quantity']);
+    }
+
+    public function test_rfq_deadline_notification_and_vendor_queue_follow_priority(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-01 08:00:00');
+
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-PRI',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+
+        foreach ([
+            ['code' => 'INV-PRI-N', 'item' => 'OFF-PRI-N', 'name' => 'Copy Paper', 'priority' => 'NORMAL'],
+            ['code' => 'INV-PRI-H', 'item' => 'COM-PRI-H', 'name' => 'Handheld Radio', 'priority' => 'HIGH'],
+            ['code' => 'INV-PRI-U', 'item' => 'COM-PRI-U', 'name' => 'TokTok', 'priority' => 'URGENT'],
+        ] as $row) {
+            InventoryItem::query()->create([
+                'code' => $row['code'],
+                'item_code' => $row['item'],
+                'description' => $row['name'],
+                'category' => 'Communication Devices',
+                'quantity' => 0,
+                'min_stock_level' => 5,
+                'unit' => 'Units',
+                'cost' => 500,
+            ]);
+
+            $prNumber = $this->actingAs($staff)
+                ->postJson('/api/procurement-requests', [
+                    'itemCode' => $row['item'],
+                    'quantity' => 10,
+                    'reason' => 'Restock '.$row['name'],
+                    'priority' => $row['priority'],
+                ])
+                ->assertCreated()
+                ->json('data.id');
+
+            $this->actingAs($staff)
+                ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+                ->assertOk();
+        }
+
+        $opportunities = $this->actingAs($vendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame(['URGENT', 'HIGH', 'NORMAL'], array_column($opportunities, 'priority'));
+        $this->assertSame('TokTok', $opportunities[0]['itemName']);
+        $this->assertSame('2026-09-03', $opportunities[0]['deadline']);
+        $this->assertSame('2026-09-04', $opportunities[0]['neededBy']);
+        $this->assertSame(2, $opportunities[0]['quoteWindowDays']);
+        $this->assertSame(3, $opportunities[0]['neededInDays']);
+        $this->assertSame('2026-09-06', $opportunities[1]['deadline']);
+        $this->assertSame('2026-09-08', $opportunities[1]['neededBy']);
+        $this->assertSame('2026-09-11', $opportunities[2]['deadline']);
+        $this->assertSame('2026-09-15', $opportunities[2]['neededBy']);
+
+        $this->assertDatabaseHas('supply_notifications', [
+            'user_id' => $vendor->id,
+            'severity' => 'danger',
+        ]);
+        $this->assertTrue(
+            AppNotification::query()
+                ->where('user_id', $vendor->id)
+                ->where('severity', 'danger')
+                ->where('title', 'like', 'URGENT RFQ:%')
+                ->exists()
+        );
+
+        \Illuminate\Support\Carbon::setTestNow();
+    }
+
+    public function test_urgent_purchase_order_gets_a_one_day_confirm_window(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-01 08:00:00');
+
+        $user = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-URG',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+        $pr = ProcurementRequest::query()->create([
+            'pr_number' => 'PR-2026-URG',
+            'department' => 'Operations',
+            'item_code' => 'COM-URG',
+            'item_name' => 'TokTok',
+            'quantity' => 8,
+            'priority' => 'URGENT',
+            'status' => 'Pending Finance Approval',
+        ]);
+        $po = PurchaseOrder::query()->create([
+            'po_number' => 'PO-2026-URG',
+            'procurement_request_id' => $pr->id,
+            'supplier_id' => $supplier->id,
+            'supplier' => 'Metro Parts Trading',
+            'total_cost' => 5000,
+            'budget_reference' => 'BUD-2026-OPS-09',
+            'payment_terms' => '30 Days Net',
+            'priority' => 'URGENT',
+            'finance_approval_status' => 'Pending Finance Approval',
+            'po_status' => 'Pending Finance Approval',
+            'created_date' => now()->toDateString(),
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 1,
+            'step' => 'Finance Approval Checkpoint',
+            'step_date' => '—',
+            'status' => 'in_progress',
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 2,
+            'step' => 'Sent to Supplier',
+            'step_date' => '—',
+            'status' => 'pending',
+        ]);
+        $po->timeline()->create([
+            'sort_order' => 3,
+            'step' => 'Supplier Confirmation',
+            'step_date' => '—',
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/api/purchase-orders/PO-2026-URG/finance-decision', [
+                'status' => 'Finance Approved',
+                'remarks' => 'Need TokTok immediately',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.priority', 'URGENT')
+            ->assertJsonPath('data.confirmBy', '2026-09-02')
+            ->assertJsonPath('data.poStatus', 'Sent to Supplier');
+
+        $this->assertTrue(
+            AppNotification::query()
+                ->where('user_id', $vendor->id)
+                ->where('title', 'URGENT PO: confirm PO-2026-URG')
+                ->exists()
+        );
+
+        \Illuminate\Support\Carbon::setTestNow();
+    }
+
+    public function test_staff_can_set_needed_in_days_without_changing_rfq_quote_window(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-01 08:00:00');
+
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-NEED',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+        InventoryItem::query()->create([
+            'code' => 'INV-NEED',
+            'item_code' => 'COM-NEED',
+            'description' => 'TokTok',
+            'category' => 'Communication Devices',
+            'quantity' => 0,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-NEED',
+                'quantity' => 10,
+                'reason' => 'Need TokTok in 3 days',
+                'priority' => 'URGENT',
+                'neededInDays' => 3,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.priority', 'URGENT')
+            ->assertJsonPath('data.neededInDays', 3)
+            ->assertJsonPath('data.quoteWindowDays', 2)
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk();
+
+        $this->actingAs($vendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonPath('data.0.deadline', '2026-09-03')
+            ->assertJsonPath('data.0.neededBy', '2026-09-04')
+            ->assertJsonPath('data.0.quoteWindowDays', 2)
+            ->assertJsonPath('data.0.neededInDays', 3);
+
+        \Illuminate\Support\Carbon::setTestNow();
+    }
+
+    public function test_overdue_rfq_with_no_quotes_alerts_staff_but_still_accepts_a_late_quote(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-01 08:00:00');
+
+        $staff = User::factory()->create();
+        $supplier = Supplier::query()->create([
+            'code' => 'SUP-LATE',
+            'company_name' => 'Metro Parts Trading',
+            'contact_person' => 'Ana Reyes',
+            'status' => 'Active',
+            'categories' => ['Communication Devices'],
+        ]);
+        $vendor = User::factory()->create([
+            'role' => User::ROLE_SUPPLIER,
+            'supplier_id' => $supplier->id,
+        ]);
+        InventoryItem::query()->create([
+            'code' => 'INV-LATE',
+            'item_code' => 'COM-LATE',
+            'description' => 'TokTok',
+            'category' => 'Communication Devices',
+            'quantity' => 0,
+            'min_stock_level' => 5,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+
+        $prNumber = $this->actingAs($staff)
+            ->postJson('/api/procurement-requests', [
+                'itemCode' => 'COM-LATE',
+                'quantity' => 10,
+                'reason' => 'Urgent TokTok',
+                'priority' => 'URGENT',
+            ])
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->actingAs($staff)
+            ->postJson('/api/procurement-requests/'.$prNumber.'/send-to-vendors')
+            ->assertOk();
+
+        \Illuminate\Support\Carbon::setTestNow('2026-09-04 09:00:00');
+
+        $this->actingAs($staff)
+            ->getJson('/api/procurement-requests')
+            ->assertOk()
+            ->assertJsonPath('data.0.rfqOverdue', true)
+            ->assertJsonPath('data.0.quoteCount', 0)
+            ->assertJsonPath('data.0.quoteDeadline', '2026-09-03');
+
+        $this->assertTrue(
+            AppNotification::query()
+                ->whereNull('user_id')
+                ->where('title', 'RFQ deadline passed with no quotes')
+                ->exists()
+        );
+
+        $this->actingAs($vendor)
+            ->getJson('/api/opportunities')
+            ->assertOk()
+            ->assertJsonPath('data.0.isOverdue', true);
+
+        Storage::fake('public');
+
+        $this->actingAs($vendor)
+            ->post('/api/quotations', [
+                'procurementId' => $prNumber,
+                'item' => 'TokTok',
+                'quantity' => 10,
+                'unitPrice' => 1000,
+                'totalPrice' => 10000,
+                'deliveryTimeDays' => 2,
+                'itemPhotos' => [UploadedFile::fake()->image('unit.jpg', 60, 60)],
+            ], ['Accept' => 'application/json'])
+            ->assertCreated();
+
+        \Illuminate\Support\Carbon::setTestNow();
     }
 }

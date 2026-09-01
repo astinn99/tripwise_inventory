@@ -1,3 +1,5 @@
+import { beginBrowserSession, endBrowserSession, shouldExpireSession, SESSION_EXPIRED_KEY } from './session';
+
 function readCookie(name) {
     const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
     return match ? decodeURIComponent(match[1]) : '';
@@ -19,12 +21,37 @@ export function getAuthToken(portal = currentPortal()) {
 export function setAuthToken(token, portal = currentPortal()) {
     if (token) {
         localStorage.setItem(TOKEN_KEYS[portal], token);
+        beginBrowserSession();
         return;
     }
 
     localStorage.removeItem(TOKEN_KEYS[portal]);
     setCachedUser(null, portal);
     clearBootstrapCache(portal);
+
+    if (!getAuthToken('internal') && !getAuthToken('vendor')) {
+        endBrowserSession();
+    }
+}
+
+export function expireLocalAuth() {
+    Object.keys(TOKEN_KEYS).forEach((portal) => {
+        localStorage.removeItem(TOKEN_KEYS[portal]);
+        setCachedUser(null, portal);
+        clearBootstrapCache(portal);
+    });
+    endBrowserSession();
+    try {
+        localStorage.setItem(SESSION_EXPIRED_KEY, String(Date.now()));
+    } catch {
+        // Ignore quota / privacy errors.
+    }
+}
+
+function hydrateAuthSession() {
+    if ((getAuthToken('internal') || getAuthToken('vendor')) && shouldExpireSession()) {
+        expireLocalAuth();
+    }
 }
 
 const USER_KEYS = {
@@ -74,6 +101,33 @@ export async function ensureCsrf() {
 
 export function resetCsrf() {
     csrfReady = false;
+}
+
+function delay(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isTransientStatus(status) {
+    return [0, 408, 429, 500, 502, 503, 504].includes(status);
+}
+
+export async function fetchCurrentUser(portal, { retries = 2 } = {}) {
+    let lastError;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await request('/api/user', { portal });
+        } catch (error) {
+            lastError = error;
+            const status = error instanceof ApiError ? error.status : 0;
+            if (!isTransientStatus(status) || attempt === retries) {
+                throw error;
+            }
+            await delay(400 * (attempt + 1));
+        }
+    }
+
+    throw lastError;
 }
 
 let bootstrapRequest = null;
@@ -271,3 +325,5 @@ export const api = {
     patch: (path, body, options = {}) => request(path, { ...options, method: 'PATCH', body }),
     delete: (path, options = {}) => request(path, { ...options, method: 'DELETE' }),
 };
+
+hydrateAuthSession();

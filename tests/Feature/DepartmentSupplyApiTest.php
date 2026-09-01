@@ -87,6 +87,7 @@ class DepartmentSupplyApiTest extends TestCase
             ->assertJsonPath('data.requestingDepartment', 'Fleet Operations')
             ->assertJsonPath('data.itemCode', 'FLT-310')
             ->assertJsonPath('data.status', 'Pending')
+            ->assertJsonPath('data.priority', 'HIGH')
             ->assertJsonPath('data.stockAvailability', 'Insufficient Stock');
 
         $this->assertDatabaseHas('supply_requests', [
@@ -95,6 +96,36 @@ class DepartmentSupplyApiTest extends TestCase
             'requesting_department' => 'Fleet Operations',
         ]);
         $this->assertSame(1, SupplyRequest::query()->count());
+    }
+
+    public function test_department_medium_priority_is_stored_as_normal(): void
+    {
+        InventoryItem::query()->create([
+            'code' => 'INV-311',
+            'item_code' => 'FLT-311',
+            'description' => 'TokTok',
+            'category' => 'Communication Devices',
+            'quantity' => 1,
+            'min_stock_level' => 4,
+            'unit' => 'Units',
+            'cost' => 4500,
+        ]);
+
+        $this->withHeaders($this->departmentHeaders())
+            ->postJson('/api/department/supply-requests', [
+                'itemCode' => 'FLT-311',
+                'quantity' => 6,
+                'requestingDepartment' => 'Fleet Operations',
+                'requestedBy' => 'Capt. Mark Santos',
+                'priority' => 'MEDIUM',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.priority', 'NORMAL');
+
+        $this->assertDatabaseHas('supply_requests', [
+            'item_code' => 'FLT-311',
+            'priority' => 'NORMAL',
+        ]);
     }
 
     public function test_unknown_item_cannot_be_requested(): void

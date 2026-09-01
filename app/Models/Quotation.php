@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'quote_number', 'procurement_request_id', 'supplier_id', 'supplier_name',
     'item', 'quantity', 'unit_price', 'total_price', 'warranty',
-    'warranty_months', 'warranty_file_path', 'item_photo_paths',
+    'warranty_months', 'warranty_file_path', 'manual_file_path', 'item_photo_paths',
     'delivery_time_days', 'quality_rating', 'payment_terms', 'status', 'notes',
 ])]
 class Quotation extends Model

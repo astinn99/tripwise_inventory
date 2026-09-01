@@ -5,23 +5,21 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\OpportunityResource;
 use App\Models\SupplierOpportunity;
+use App\Support\Priority;
 use Illuminate\Http\Request;
 
 class OpportunityController extends Controller
 {
     public function index(Request $request)
     {
-        $query = SupplierOpportunity::query()->with('procurementRequest.catalogItem')->orderByDesc('id');
+        $query = SupplierOpportunity::query()->withVendorRelations()->orderByDesc('id');
 
         if ($request->user()->isSupplier()) {
-            $supplierId = $request->user()->supplier_id;
-            $query->where('supplier_id', $supplierId)
-                ->where('status', 'Open for Quotation')
-                ->whereDoesntHave('procurementRequest.quotations', function ($quotes) use ($supplierId) {
-                    $quotes->where('supplier_id', $supplierId);
-                });
+            $query->openForVendor((int) $request->user()->supplier_id);
         }
 
-        return $this->ok(OpportunityResource::collection($query->get()));
+        return $this->ok(OpportunityResource::collection(
+            Priority::sortOpportunities($query->get())
+        ));
     }
 }

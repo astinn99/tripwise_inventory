@@ -2,18 +2,19 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
+import { normalizePriority, priorityBadgeClass, sortByPriority } from '../services/priority';
 
 export const Quotations = () => {
   const { quotations, selectSupplierAndCreatePO, searchQuery } = useApp();
 
-  const filteredQuotes = quotations.filter(q =>
+  const filteredQuotes = sortByPriority(quotations.filter(q =>
     !String(q.id || '').startsWith('tmp-') && (
       q.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.item.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.procurementId.toLowerCase().includes(searchQuery.toLowerCase())
     )
-  );
+  ));
 
   return (
     <div className="quotations-page">
@@ -36,11 +37,12 @@ export const Quotations = () => {
         </div>
 
         <div className="table-responsive">
-          <table className="custom-table">
+          <table className="custom-table table-stack">
             <thead>
               <tr>
                 <th>Quotation ID</th>
                 <th>Procurement Ref</th>
+                <th>Priority</th>
                 <th>Supplier Name</th>
                 <th>Item & Qty</th>
                 <th>Vendor Photos</th>
@@ -48,6 +50,7 @@ export const Quotations = () => {
                 <th className="text-right">Total Price</th>
                 <th>Delivery Lead Time</th>
                 <th>Warranty</th>
+                <th>Guide / Manual</th>
                 <th>Vendor Rating</th>
                 <th>Status</th>
                 <th className="text-right">Action</th>
@@ -56,17 +59,20 @@ export const Quotations = () => {
             <tbody>
               {filteredQuotes.map(q => (
                 <tr key={q.id}>
-                  <td className="font-mono text-xs text-blue font-bold">{q.id}</td>
-                  <td className="font-mono text-xs text-purple-400 font-semibold">{q.procurementId}</td>
-                  <td className="font-bold text-xs text-primary">{q.supplierName}</td>
-                  <td>
+                  <td data-label="Quotation ID" className="font-mono text-xs text-blue font-bold">{q.id}</td>
+                  <td data-label="Procurement Ref" className="font-mono text-xs text-purple-400 font-semibold">{q.procurementId}</td>
+                  <td data-label="Priority">
+                    <span className={`badge ${priorityBadgeClass(q.priority)}`}>{normalizePriority(q.priority)}</span>
+                  </td>
+                  <td data-label="Supplier Name" className="font-bold text-xs text-primary">{q.supplierName}</td>
+                  <td data-label="Item & Qty">
                     <ItemIdentity
                       src={q.imageUrl}
                       name={q.item}
                       extra={`Qty: ${q.quantity}`}
                     />
                   </td>
-                  <td>
+                  <td data-label="Vendor Photos">
                     {q.itemPhotoUrls?.length ? (
                       <div className="quote-photo-strip">
                         {q.itemPhotoUrls.map((url) => (
@@ -77,17 +83,22 @@ export const Quotations = () => {
                       <span className="quote-photo-empty">None</span>
                     )}
                   </td>
-                  <td className="text-right font-mono text-xs text-secondary">₱{Number(q.unitPrice).toLocaleString()}</td>
-                  <td className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
-                  <td className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
-                  <td className="text-xs text-secondary">{q.warrantyLabel || q.warranty || '—'}</td>
-                  <td><span className="badge badge-normal">★ {q.qualityRating}</span></td>
-                  <td>
+                  <td data-label="Unit Price" className="text-right font-mono text-xs text-secondary">₱{Number(q.unitPrice).toLocaleString()}</td>
+                  <td data-label="Total Price" className="text-right font-mono text-xs text-success font-bold">₱{Number(q.totalPrice).toLocaleString()}</td>
+                  <td data-label="Delivery Lead Time" className="text-xs text-secondary">{q.deliveryTimeDays} days</td>
+                  <td data-label="Warranty" className="text-xs text-secondary">{q.warrantyLabel || q.warranty || 'None'}</td>
+                  <td data-label="Guide / Manual" className="text-xs text-secondary">
+                    {q.manualFileUrl ? (
+                      <a href={q.manualFileUrl} target="_blank" rel="noreferrer">View</a>
+                    ) : 'None'}
+                  </td>
+                  <td data-label="Vendor Rating"><span className="badge badge-normal">★ {q.qualityRating}</span></td>
+                  <td data-label="Status">
                     <span className={`badge badge-${q.status === 'Selected' ? 'supplier-selected' : 'info'}`}>
                       {q.status}
                     </span>
                   </td>
-                  <td className="text-right">
+                  <td data-label="Action" className="text-right table-stack-actions">
                     {q.status !== 'Selected' && (
                       <button
                         onClick={() => selectSupplierAndCreatePO(q.procurementId, q.id)}

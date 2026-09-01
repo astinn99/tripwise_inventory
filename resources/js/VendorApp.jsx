@@ -7,7 +7,7 @@ import { VendorPortal } from './pages/VendorPortal';
 import { Login } from './pages/Login';
 
 export function VendorApp() {
-  const { user, collectionsLoading, bootError, actionError } = useApp();
+  const { user, collectionsLoading, bootError, actionError, sidebarOpen, setSidebarOpen } = useApp();
   const [vendorTab, setVendorTab] = useState('dashboard');
 
   if (bootError) {
@@ -29,6 +29,14 @@ export function VendorApp() {
 
   return (
     <div className="app-shell">
+      {sidebarOpen ? (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
+        />
+      ) : null}
       <VendorSidebar activeTab={vendorTab} setActiveTab={setVendorTab} />
 
       <div className="main-wrapper">

@@ -34,7 +34,7 @@ class QuotationUploadRequest extends FormRequest
         return match ($step) {
             'start' => [
                 'step' => ['required', 'string', Rule::in(['start'])],
-                'kind' => ['required', 'string', Rule::in(['photo', 'warranty'])],
+                'kind' => ['required', 'string', Rule::in(['photo', 'warranty', 'manual'])],
                 'fileName' => ['required', 'string', 'max:255'],
             ],
             'chunk' => [
@@ -48,7 +48,7 @@ class QuotationUploadRequest extends FormRequest
             ],
             'complete' => [
                 'step' => ['required', 'string', Rule::in(['complete'])],
-                'kind' => ['required', 'string', Rule::in(['photo', 'warranty'])],
+                'kind' => ['required', 'string', Rule::in(['photo', 'warranty', 'manual'])],
                 'fileName' => ['required', 'string', 'max:255'],
                 'file' => ['nullable', 'file', 'max:10240'],
                 'chunkBase64' => ['nullable', 'string'],

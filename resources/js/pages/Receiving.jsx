@@ -1,16 +1,17 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { Truck } from 'lucide-react';
+import { normalizePriority, priorityBadgeClass, sortByPriority } from '../services/priority';
 
 export const Receiving = () => {
   const { deliveries, searchQuery } = useApp();
 
-  const filteredDeliveries = deliveries.filter(d =>
+  const filteredDeliveries = sortByPriority(deliveries.filter(d =>
     d.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
     d.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
     d.supplier.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (d.trackingNumber || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ));
 
   return (
     <div className="receiving-page">
@@ -37,6 +38,7 @@ export const Receiving = () => {
               <tr>
                 <th>Delivery ID</th>
                 <th>PO Number</th>
+                <th>Priority</th>
                 <th>Supplier</th>
                 <th>Delivery Date</th>
                 <th className="text-center">Items Count</th>
@@ -48,7 +50,7 @@ export const Receiving = () => {
             <tbody>
               {filteredDeliveries.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-xs text-secondary p-4">
+                  <td colSpan={9} className="text-xs text-secondary p-4">
                     No inbound deliveries yet. Confirmed purchase orders will appear here.
                   </td>
                 </tr>
@@ -57,6 +59,9 @@ export const Receiving = () => {
                 <tr key={del.id}>
                   <td className="font-mono text-xs text-blue-400 font-bold">{del.id}</td>
                   <td className="font-mono text-xs text-emerald-400 font-bold">{del.poNumber}</td>
+                  <td>
+                    <span className={`badge ${priorityBadgeClass(del.priority)}`}>{normalizePriority(del.priority)}</span>
+                  </td>
                   <td className="font-bold text-xs text-white">{del.supplier}</td>
                   <td className="text-xs text-slate-300">{del.deliveryDate}</td>
                   <td className="text-center font-bold text-white">{del.itemsCount}</td>

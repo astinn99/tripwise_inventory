@@ -26,6 +26,8 @@ export const Sidebar = () => {
   const {
     activeTab,
     setActiveTab,
+    sidebarOpen,
+    setSidebarOpen,
     supplyRequests,
     procurementRequests,
     purchaseOrders,
@@ -97,7 +99,7 @@ export const Sidebar = () => {
   ];
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`} id="app-sidebar">
       {/* Brand Header */}
       <div className="sidebar-brand">
         <BrandLogo subtitle="Supply Chain & Inventory" />
@@ -115,7 +117,10 @@ export const Sidebar = () => {
                 return (
                   <li key={item.id}>
                     <button
-                      onClick={() => setActiveTab(item.id)}
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        setSidebarOpen(false);
+                      }}
                       className={`nav-btn ${isActive ? 'active' : ''}`}
                     >
                       <Icon className="nav-icon" />

@@ -9,6 +9,7 @@ use App\Http\Resources\InventoryItemResource;
 use App\Models\Delivery;
 use App\Models\InventoryItem;
 use App\Services\SupplyChainService;
+use App\Support\Priority;
 
 class DeliveryController extends Controller
 {
@@ -17,7 +18,10 @@ class DeliveryController extends Controller
         $service->syncConfirmedPurchaseOrderDeliveries();
 
         return $this->ok(DeliveryResource::collection(
-            Delivery::query()->with('items')->orderByDesc('id')->get()
+            Priority::sortRecords(
+                Delivery::query()->with(['items', 'purchaseOrder:id,priority'])->orderByDesc('id')->get(),
+                'purchaseOrder.priority'
+            )
         ));
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Support\Priority;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -20,7 +21,7 @@ class DepartmentSupplyRequestStoreRequest extends FormRequest
             'requestingDepartment' => ['required', 'string', 'max:255'],
             'requestedBy' => ['required', 'string', 'max:255'],
             'requiredDate' => ['nullable', 'date'],
-            'priority' => ['nullable', 'string', Rule::in(['LOW', 'MEDIUM', 'HIGH', 'URGENT'])],
+            'priority' => Priority::rule(),
             'purpose' => ['nullable', 'string', 'max:2000'],
         ];
     }

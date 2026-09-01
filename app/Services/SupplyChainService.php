@@ -29,6 +29,7 @@ use App\Models\SupplyRequest;
 use App\Models\User;
 use App\Support\Base64Upload;
 use App\Support\DocumentCode;
+use App\Support\Priority;
 use App\Support\SafeBroadcast;
 use App\Support\WarrantyDuration;
 use Illuminate\Http\UploadedFile;
@@ -70,7 +71,7 @@ class SupplyChainService
                 'category' => $item->category,
                 'quantity_requested' => $quantity,
                 'required_date' => $data['requiredDate'] ?? null,
-                'priority' => $data['priority'] ?? 'MEDIUM',
+                'priority' => Priority::normalize($data['priority'] ?? null),
                 'stock_availability' => $available >= $quantity ? 'Stock Available' : 'Insufficient Stock',
                 'status' => 'Pending',
                 'requested_by' => $data['requestedBy'],
@@ -132,7 +133,8 @@ class SupplyChainService
                 'item_name' => $request->item_name,
                 'quantity' => $orderQty,
                 'reason' => "Insufficient stock for {$request->request_number}. Available: {$available}, Requested: {$request->quantity_requested}",
-                'priority' => $request->priority,
+                'priority' => Priority::normalize($request->priority),
+                'needed_in_days' => Priority::neededInDays($request->priority),
                 'status' => 'For Procurement',
                 'date_created' => now()->toDateString(),
                 'estimated_cost' => ($item?->cost ?? 1000) * $request->quantity_requested,
@@ -189,10 +191,12 @@ class SupplyChainService
                 'budget_reference' => 'BUD-'.now()->year.'-'.strtoupper(substr($pr->department, 0, 3)).'-'.random_int(10, 99),
                 'payment_terms' => $quote->payment_terms ?: '30 Days Net',
                 'procurement_reason' => $pr->reason,
+                'priority' => Priority::normalize($pr->priority),
                 'delivery_date' => now()->addDays($quote->delivery_time_days ?: 7)->toDateString(),
                 'warranty' => $quote->warranty,
                 'warranty_months' => $quote->warranty_months,
                 'warranty_file_path' => $quote->warranty_file_path,
+                'manual_file_path' => $quote->manual_file_path,
                 'finance_approval_status' => 'Pending Finance Approval',
                 'po_status' => 'Pending Finance Approval',
                 'created_date' => now()->toDateString(),
@@ -231,8 +235,13 @@ class SupplyChainService
         $remarksText = $remarks !== ''
             ? $remarks
             : ($status === 'Finance Approved' ? 'Approved by Finance Officer' : 'Decision recorded by Finance');
+        $confirmBy = $po->confirm_by;
+        $priority = Priority::normalize($po->priority);
 
         if ($status === 'Finance Approved') {
+            $po->loadMissing('procurementRequest');
+            $priority = Priority::normalize($po->priority ?: $po->procurementRequest?->priority);
+            $confirmBy = now()->copy()->addDays(Priority::confirmDays($priority))->toDateString();
             $poStatus = 'Sent to Supplier';
             $prStatus = 'Finance Approved';
             $timeline = [
@@ -261,6 +270,10 @@ class SupplyChainService
             'po_status' => $poStatus,
             'approver' => $actor->name,
             'finance_remarks' => $remarksText,
+            'confirm_by' => $status === 'Finance Approved' ? $confirmBy : $po->confirm_by,
+            'priority' => $status === 'Finance Approved'
+                ? Priority::normalize($po->priority ?: $po->procurementRequest?->priority)
+                : $po->priority,
         ]);
 
         if ($po->procurement_request_id) {
@@ -270,13 +283,31 @@ class SupplyChainService
         }
 
         $poNumber = $po->po_number;
-        dispatch(function () use ($po, $poNumber, $status, $remarksText): void {
+        $vendorUserIds = $status === 'Finance Approved' && $po->supplier_id
+            ? User::query()->where('supplier_id', $po->supplier_id)->pluck('id')->all()
+            : [];
+        $confirmByDate = $status === 'Finance Approved' ? $confirmBy : null;
+        dispatch(function () use ($po, $poNumber, $status, $remarksText, $vendorUserIds, $priority, $confirmByDate): void {
             $this->notifications->create(
                 "Finance Subsystem Decision: {$status}",
                 "Purchase Order {$poNumber} has been updated to \"{$status}\". Remarks: ".($remarksText !== '' ? $remarksText : 'None'),
                 'finance',
                 $status === 'Finance Approved' ? 'success' : ($status === 'Finance Rejected' ? 'danger' : 'warning')
             );
+
+            if ($vendorUserIds !== []) {
+                $due = $confirmByDate ? ' Confirm shipment by '.Priority::displayDate($confirmByDate).'.' : '';
+                $this->notifications->createMany(array_map(fn (int $userId) => [
+                    'title' => $priority === Priority::URGENT
+                        ? "URGENT PO: confirm {$poNumber}"
+                        : "Purchase order {$poNumber} awarded",
+                    'message' => "PO {$poNumber} was approved and sent to your portal.{$due}",
+                    'type' => 'po',
+                    'severity' => Priority::notificationSeverity($priority),
+                    'user_id' => $userId,
+                ], $vendorUserIds));
+            }
+
             $this->broadcastPO($po);
         })->afterResponse();
 
@@ -996,30 +1027,26 @@ class SupplyChainService
             }
         }
 
-        $warrantyFile = $data['warrantyFile'] ?? null;
-        $warrantyFileBase64 = $data['warrantyFileBase64'] ?? null;
-        $warrantyFileName = $data['warrantyFileName'] ?? null;
         $itemPhotos = $this->uploadedPhotos($data['itemPhotos'] ?? null);
         if ($itemPhotos === [] && ! empty($data['itemPhotoTokens'])) {
             $itemPhotos = app(QuotationUploadService::class)->photosFromTokens($data['itemPhotoTokens'], $actor);
         }
-        if (! $warrantyFile instanceof UploadedFile && ! empty($data['warrantyToken'])) {
-            $warrantyFile = app(QuotationUploadService::class)->toUploadedFile($data['warrantyToken'], $actor, 'warrantyFile');
-        }
+        $warrantyFile = $this->resolveQuotedDocument($data, $actor, 'warrantyFile', 'warrantyToken', 'warrantyFileBase64', 'warrantyFileName');
+        $manualFile = $this->resolveQuotedDocument($data, $actor, 'manualFile', 'manualToken', 'manualFileBase64', 'manualFileName');
         unset(
             $data['warrantyFile'],
             $data['warrantyFileBase64'],
             $data['warrantyFileName'],
+            $data['warrantyToken'],
+            $data['manualFile'],
+            $data['manualFileBase64'],
+            $data['manualFileName'],
+            $data['manualToken'],
             $data['itemPhotos'],
             $data['itemPhotosBase64'],
             $data['itemPhotoNames'],
-            $data['itemPhotoTokens'],
-            $data['warrantyToken']
+            $data['itemPhotoTokens']
         );
-
-        if (! $warrantyFile instanceof UploadedFile) {
-            $warrantyFile = $this->uploadedFileFromBase64($warrantyFileBase64, $warrantyFileName);
-        }
 
         $quote = Quotation::query()->create([
             'quote_number' => DocumentCode::next('quotations', 'quote_number', 'QT'),
@@ -1041,6 +1068,10 @@ class SupplyChainService
 
         if ($warrantyFile instanceof UploadedFile) {
             $this->storeWarrantyFile($quote, $warrantyFile);
+        }
+
+        if ($manualFile instanceof UploadedFile) {
+            $this->storeManualFile($quote, $manualFile);
         }
 
         $this->syncQuotationItemPhotos($quote, $itemPhotos, []);
@@ -1087,16 +1118,12 @@ class SupplyChainService
             ]);
         }
 
-        $warrantyFile = $data['warrantyFile'] ?? null;
-        $warrantyFileBase64 = $data['warrantyFileBase64'] ?? null;
-        $warrantyFileName = $data['warrantyFileName'] ?? null;
         $itemPhotos = $this->uploadedPhotos($data['itemPhotos'] ?? null);
         if ($itemPhotos === [] && ! empty($data['itemPhotoTokens'])) {
             $itemPhotos = app(QuotationUploadService::class)->photosFromTokens($data['itemPhotoTokens'], $actor);
         }
-        if (! $warrantyFile instanceof UploadedFile && ! empty($data['warrantyToken'])) {
-            $warrantyFile = app(QuotationUploadService::class)->toUploadedFile($data['warrantyToken'], $actor, 'warrantyFile');
-        }
+        $warrantyFile = $this->resolveQuotedDocument($data, $actor, 'warrantyFile', 'warrantyToken', 'warrantyFileBase64', 'warrantyFileName');
+        $manualFile = $this->resolveQuotedDocument($data, $actor, 'manualFile', 'manualToken', 'manualFileBase64', 'manualFileName');
         $keepItemPhotos = array_key_exists('keepItemPhotos', $data) && is_array($data['keepItemPhotos'])
             ? $data['keepItemPhotos']
             : null;
@@ -1104,29 +1131,31 @@ class SupplyChainService
             $data['warrantyFile'],
             $data['warrantyFileBase64'],
             $data['warrantyFileName'],
+            $data['warrantyToken'],
+            $data['manualFile'],
+            $data['manualFileBase64'],
+            $data['manualFileName'],
+            $data['manualToken'],
             $data['itemPhotos'],
             $data['itemPhotosBase64'],
             $data['itemPhotoNames'],
             $data['itemPhotoTokens'],
-            $data['warrantyToken'],
             $data['keepItemPhotos']
         );
 
-        if (! $warrantyFile instanceof UploadedFile) {
-            $warrantyFile = $this->uploadedFileFromBase64($warrantyFileBase64, $warrantyFileName);
-        }
-
         $this->syncQuotationItemPhotos($quote, $itemPhotos, $keepItemPhotos);
+
+        $warrantyText = array_key_exists('warranty', $data) ? ($data['warranty'] ?: null) : $quote->warranty;
+        $warrantyMonths = array_key_exists('warrantyMonths', $data)
+            ? WarrantyDuration::months($data['warrantyMonths'], $warrantyText)
+            : WarrantyDuration::months($quote->warranty_months, $warrantyText);
 
         $unitPrice = (float) $data['unitPrice'];
         $quote->update([
             'unit_price' => $unitPrice,
             'total_price' => $unitPrice * (int) $quote->quantity,
-            'warranty' => $data['warranty'] ?? $quote->warranty,
-            'warranty_months' => WarrantyDuration::months(
-                $data['warrantyMonths'] ?? $quote->warranty_months,
-                $data['warranty'] ?? $quote->warranty
-            ),
+            'warranty' => $warrantyText,
+            'warranty_months' => $warrantyMonths,
             'delivery_time_days' => (int) ($data['deliveryTimeDays'] ?? $quote->delivery_time_days),
             'payment_terms' => $data['paymentTerms'] ?? $quote->payment_terms,
             'notes' => $data['notes'] ?? $quote->notes,
@@ -1134,6 +1163,10 @@ class SupplyChainService
 
         if ($warrantyFile instanceof UploadedFile) {
             $this->storeWarrantyFile($quote, $warrantyFile);
+        }
+
+        if ($manualFile instanceof UploadedFile) {
+            $this->storeManualFile($quote, $manualFile);
         }
 
         $quote = $quote->fresh(['procurementRequest.catalogItem', 'supplier']);
@@ -1156,8 +1189,9 @@ class SupplyChainService
         return $quote;
     }
 
-    public function createManualProcurementRequest(InventoryItem $item, int $quantity, string $reason, string $priority): ProcurementRequest
+    public function createManualProcurementRequest(InventoryItem $item, int $quantity, string $reason, string $priority, ?int $neededInDays = null): ProcurementRequest
     {
+        $normalized = Priority::normalize($priority);
         $pr = ProcurementRequest::query()->create([
             'pr_number' => DocumentCode::next('procurement_requests', 'pr_number', 'PR'),
             'source_request' => 'MANUAL',
@@ -1166,7 +1200,8 @@ class SupplyChainService
             'item_name' => $item->description,
             'quantity' => $quantity,
             'reason' => $reason,
-            'priority' => $priority,
+            'priority' => $normalized,
+            'needed_in_days' => Priority::neededInDays($normalized, $neededInDays),
             'status' => 'For Procurement',
             'date_created' => now()->toDateString(),
             'estimated_cost' => ($item->cost ?: 1000) * $quantity,
@@ -1185,11 +1220,19 @@ class SupplyChainService
 
         $item = InventoryItem::query()->where('item_code', $pr->item_code)->first();
         $quantity = (int) ($data['quantity'] ?? $pr->quantity);
+        $priority = isset($data['priority']) ? Priority::normalize($data['priority']) : Priority::normalize($pr->priority);
+        $previousDefault = Priority::neededInDays($pr->priority);
+        $neededInDays = array_key_exists('neededInDays', $data)
+            ? Priority::neededInDays($priority, $data['neededInDays'])
+            : ((int) $pr->needed_in_days === $previousDefault
+                ? Priority::neededInDays($priority)
+                : Priority::neededInDays($priority, $pr->needed_in_days));
 
         $pr->update([
             'quantity' => $quantity,
             'reason' => $data['reason'] ?? $pr->reason,
-            'priority' => $data['priority'] ?? $pr->priority,
+            'priority' => $priority,
+            'needed_in_days' => $neededInDays,
             'estimated_cost' => ($item?->cost ?: 1000) * $quantity,
         ]);
 
@@ -1228,6 +1271,40 @@ class SupplyChainService
         });
     }
 
+    public function flagOverdueRfqs(): int
+    {
+        $requests = ProcurementRequest::query()
+            ->withCount('quotations')
+            ->whereNull('rfq_overdue_notified_at')
+            ->whereNull('po_number')
+            ->where(function ($query) {
+                $query->whereNull('selected_supplier')->orWhere('selected_supplier', '');
+            })
+            ->whereIn('status', ['Quotation', 'For Procurement'])
+            ->whereHas('opportunities', fn ($query) => $query->whereDate('deadline', '<', now()->toDateString()))
+            ->get();
+
+        $notified = 0;
+
+        foreach ($requests as $pr) {
+            if ((int) $pr->quotations_count > 0) {
+                continue;
+            }
+
+            $deadline = $pr->opportunities()->min('deadline');
+            $this->notifications->create(
+                'RFQ deadline passed with no quotes',
+                "Procurement {$pr->pr_number} ({$pr->item_name}) received no vendor quotations by ".Priority::displayDate($deadline).'. The RFQ stays open so a late quote can still be submitted.',
+                'procurement',
+                'danger'
+            );
+            $pr->update(['rfq_overdue_notified_at' => now()]);
+            $notified++;
+        }
+
+        return $notified;
+    }
+
     private function publishOpportunities(ProcurementRequest $pr, ?string $category): int
     {
         $suppliers = Supplier::query()
@@ -1247,9 +1324,14 @@ class SupplyChainService
         }
 
         $now = now();
-        $deadline = $now->copy()->addDays(10)->toDateString();
+        $priority = Priority::normalize($pr->priority);
+        $quoteDays = Priority::quoteDays($priority);
+        $neededInDays = Priority::neededInDays($priority, $pr->needed_in_days);
+        $deadline = $now->copy()->addDays($quoteDays)->toDateString();
+        $neededBy = $now->copy()->addDays($neededInDays)->toDateString();
         $requirements = trim(implode(' ', array_filter([
             "Please submit a quotation for {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
+            "Quote by ".Priority::displayDate($deadline).". Need item in {$neededInDays} day(s) (".Priority::displayDate($neededBy).").",
             $pr->reason,
         ])));
         $budgetRange = $pr->estimated_cost
@@ -1279,13 +1361,16 @@ class SupplyChainService
         SupplierOpportunity::query()->insert($rows);
 
         $vendorNotes = [];
+        $deadlineLabel = $quoteDays === 1 ? 'tomorrow' : Priority::displayDate($deadline);
         foreach ($newSuppliers as $supplier) {
             foreach ($supplier->users as $vendorUser) {
                 $vendorNotes[] = [
-                    'title' => 'New RFQ Available',
-                    'message' => "{$pr->pr_number}: quote {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
+                    'title' => $priority === Priority::NORMAL
+                        ? 'New RFQ Available'
+                        : "{$priority} RFQ: quote {$pr->quantity} {$pr->item_name} by {$deadlineLabel}",
+                    'message' => "{$pr->pr_number}: quote {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}) by {$deadlineLabel}. Item needed by ".Priority::displayDate($neededBy).".",
                     'type' => 'procurement',
-                    'severity' => 'info',
+                    'severity' => Priority::notificationSeverity($priority),
                     'user_id' => $vendorUser->id,
                 ];
             }
@@ -1554,33 +1639,68 @@ class SupplyChainService
         ]);
     }
 
-    private function uploadedFileFromBase64(mixed $base64, mixed $filename): ?UploadedFile
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function resolveQuotedDocument(
+        array $data,
+        User $actor,
+        string $fileKey,
+        string $tokenKey,
+        string $base64Key,
+        string $nameKey
+    ): ?UploadedFile {
+        $file = $data[$fileKey] ?? null;
+
+        if (! $file instanceof UploadedFile && ! empty($data[$tokenKey])) {
+            $file = app(QuotationUploadService::class)->toUploadedFile($data[$tokenKey], $actor, $fileKey);
+        }
+
+        if (! $file instanceof UploadedFile) {
+            $file = $this->uploadedFileFromBase64($data[$base64Key] ?? null, $data[$nameKey] ?? null, $fileKey);
+        }
+
+        return $file instanceof UploadedFile ? $file : null;
+    }
+
+    private function uploadedFileFromBase64(mixed $base64, mixed $filename, string $errorKey = 'warrantyFile'): ?UploadedFile
     {
+        $prefix = $errorKey === 'manualFile' ? 'manual_' : 'warranty_';
+
         return Base64Upload::file(
             $base64,
             $filename,
-            'warrantyFile',
+            $errorKey,
             10 * 1024 * 1024,
             ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
             'pdf',
-            'warranty_'
+            $prefix
         );
     }
 
     private function storeWarrantyFile(Quotation $quote, UploadedFile $file): void
     {
-        $oldPath = $quote->warranty_file_path;
-        $path = $this->storePublicUpload($file, 'quotation-warranties', $quote->quote_number);
+        $this->storeQuotationDocument($quote, $file, 'quotation-warranties', 'warranty_file_path');
+    }
+
+    private function storeManualFile(Quotation $quote, UploadedFile $file): void
+    {
+        $this->storeQuotationDocument($quote, $file, 'quotation-manuals', 'manual_file_path');
+    }
+
+    private function storeQuotationDocument(Quotation $quote, UploadedFile $file, string $directory, string $column): void
+    {
+        $oldPath = $quote->{$column};
+        $path = $this->storePublicUpload($file, $directory, $quote->quote_number);
 
         if ($oldPath && $oldPath !== $path && Storage::disk('public')->exists($oldPath)) {
             Storage::disk('public')->delete($oldPath);
         }
 
-        $quote->forceFill(['warranty_file_path' => $path])->save();
+        $quote->forceFill([$column => $path])->save();
     }
 
     /**
-     * @param  mixed  $photos
      * @return list<UploadedFile>
      */
     private function uploadedPhotos(mixed $photos): array

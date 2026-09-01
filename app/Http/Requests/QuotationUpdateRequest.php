@@ -36,6 +36,10 @@ class QuotationUpdateRequest extends FormRequest
             'warrantyFileBase64' => ['nullable', 'string'],
             'warrantyFileName' => ['nullable', 'string', 'max:255'],
             'warrantyToken' => ['nullable', 'string', 'size:32'],
+            'manualFile' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
+            'manualFileBase64' => ['nullable', 'string'],
+            'manualFileName' => ['nullable', 'string', 'max:255'],
+            'manualToken' => ['nullable', 'string', 'size:32'],
             'itemPhotoTokens' => ['nullable', 'array', 'max:3'],
             'itemPhotoTokens.*' => ['required', 'string', 'size:32'],
             'itemPhotosBase64' => ['nullable', 'array', 'max:3'],
@@ -61,6 +65,7 @@ class QuotationUpdateRequest extends FormRequest
             'itemPhotos.*.max' => 'Each item photo may not be larger than 5 MB.',
             'itemPhotos.*.uploaded' => 'A photo exceeded the server upload limit and was rejected. Please choose a smaller image.',
             'warrantyFile.uploaded' => 'The warranty certificate exceeded the server upload limit. Please attach a smaller file.',
+            'manualFile.uploaded' => 'The item manual exceeded the server upload limit. Please attach a smaller file.',
         ];
     }
 }

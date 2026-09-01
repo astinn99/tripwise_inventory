@@ -30,7 +30,7 @@ const menuSections = [
 ];
 
 export const VendorSidebar = ({ activeTab, setActiveTab }) => {
-  const { opportunities, quotations, purchaseOrders } = useApp();
+  const { opportunities, quotations, purchaseOrders, sidebarOpen, setSidebarOpen } = useApp();
 
   const badges = {
     opportunities: opportunities.length,
@@ -39,7 +39,7 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`} id="app-sidebar">
       <div className="sidebar-brand">
         <BrandLogo subtitle="Vendor Portal" />
       </div>
@@ -55,7 +55,10 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
                 return (
                   <li key={item.id}>
                     <button
-                      onClick={() => setActiveTab(item.id)}
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        setSidebarOpen(false);
+                      }}
                       className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
                     >
                       <Icon className="nav-icon" />

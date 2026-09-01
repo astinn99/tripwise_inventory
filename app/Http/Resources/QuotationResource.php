@@ -2,10 +2,13 @@
 
 namespace App\Http\Resources;
 
+use App\Models\Quotation;
+use App\Support\Priority;
+use App\Support\WarrantyDuration;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-/** @mixin \App\Models\Quotation */
+/** @mixin Quotation */
 class QuotationResource extends JsonResource
 {
     public function toArray(Request $request): array
@@ -25,9 +28,11 @@ class QuotationResource extends JsonResource
             'totalPrice' => (float) $this->total_price,
             'warranty' => $this->warranty,
             'warrantyMonths' => $this->warranty_months,
-            'warrantyLabel' => \App\Support\WarrantyDuration::label($this->warranty_months, $this->warranty),
+            'warrantyLabel' => WarrantyDuration::label($this->warranty_months, $this->warranty),
             'warrantyFileUrl' => $this->warranty_file_path ? '/storage/'.$this->warranty_file_path : null,
+            'manualFileUrl' => $this->manual_file_path ? '/storage/'.$this->manual_file_path : null,
             'itemPhotoUrls' => array_map(fn (string $path) => '/storage/'.$path, $this->itemPhotoPaths()),
+            'priority' => Priority::normalize($this->relationLoaded('procurementRequest') ? $this->procurementRequest?->priority : null),
             'deliveryTimeDays' => $this->delivery_time_days,
             'qualityRating' => (float) $this->quality_rating,
             'paymentTerms' => $this->payment_terms,

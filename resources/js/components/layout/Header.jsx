@@ -4,7 +4,8 @@ import {
   Search,
   Bell,
   User,
-  X
+  X,
+  Menu
 } from 'lucide-react';
 
 const pageMeta = {
@@ -37,6 +38,8 @@ export const Header = () => {
     markNotificationRead,
     markAllNotificationsRead,
     setActiveTab,
+    sidebarOpen,
+    setSidebarOpen,
     user,
     logout
   } = useApp();
@@ -53,6 +56,16 @@ export const Header = () => {
   return (
     <header className="app-header">
       <div className="header-left">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-sidebar"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          <Menu className="w-5 h-5" />
+        </button>
         <div>
           <span className="header-page-label">{currentPage.title}</span>
           <span className="header-page-hint">{currentPage.hint}</span>

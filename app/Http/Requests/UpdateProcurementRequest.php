@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Support\Priority;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateProcurementRequest extends FormRequest
@@ -16,7 +17,8 @@ class UpdateProcurementRequest extends FormRequest
         return [
             'quantity' => ['required', 'integer', 'min:1'],
             'reason' => ['required', 'string', 'max:2000'],
-            'priority' => ['required', 'string', 'max:32'],
+            'priority' => Priority::rule(required: true),
+            'neededInDays' => ['nullable', 'integer', 'min:1', 'max:90'],
         ];
     }
 }

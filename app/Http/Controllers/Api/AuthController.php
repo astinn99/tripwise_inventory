@@ -2,16 +2,27 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\OtpException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LoginRequest;
+use App\Http\Requests\OtpChallengeRequest;
+use App\Http\Requests\OtpResendRequest;
 use App\Http\Resources\UserResource;
+use App\Models\EmailOtp;
 use App\Models\User;
+use App\Services\OtpService;
+use App\Services\PortalTokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\TransientToken;
 
 class AuthController extends Controller
 {
+    public function __construct(
+        private OtpService $otp,
+        private PortalTokenService $tokens,
+    ) {}
+
     public function login(LoginRequest $request)
     {
         $portal = $request->validated('portal') ?: 'internal';
@@ -35,13 +46,69 @@ class AuthController extends Controller
             return $this->fail('Use a supply chain account to sign in to inventory.', 403);
         }
 
-        $user->tokens()->where('name', $portal)->delete();
-        $token = $user->createToken($portal)->plainTextToken;
+        if ($user->isSupplier() && ! $user->hasVerifiedEmail()) {
+            try {
+                $challenge = $this->otp->issue($user, EmailOtp::PURPOSE_REGISTER, 'vendor');
+            } catch (OtpException $exception) {
+                return $this->fail($exception->getMessage(), $exception->status);
+            }
 
-        return $this->ok([
-            ...(new UserResource($user))->resolve(),
-            'token' => $token,
-        ], 'Login successful');
+            return $this->ok(
+                $this->otp->payload($challenge, requiresOtp: false, requiresEmailVerification: true),
+                'Verify the email on this account before signing in. We sent a code to your registered address.'
+            );
+        }
+
+        try {
+            $challenge = $this->otp->issue($user, EmailOtp::PURPOSE_LOGIN, $portal);
+        } catch (OtpException $exception) {
+            return $this->fail($exception->getMessage(), $exception->status);
+        }
+
+        return $this->ok(
+            $this->otp->payload($challenge),
+            'A verification code was sent to your registered email.'
+        );
+    }
+
+    public function verifyLoginOtp(OtpChallengeRequest $request)
+    {
+        try {
+            $challenge = $this->otp->verify(
+                $request->validated('challengeId'),
+                $request->validated('code'),
+                EmailOtp::PURPOSE_LOGIN,
+            );
+        } catch (OtpException $exception) {
+            return $this->fail($exception->getMessage(), $exception->status);
+        }
+
+        $user = $challenge->user?->load('supplier:id,code,company_name,status');
+
+        if (! $user) {
+            return $this->fail('This code is invalid or has expired.');
+        }
+
+        $portal = $challenge->portal ?: 'internal';
+
+        return $this->ok($this->tokens->issue($user, $portal), 'Login successful');
+    }
+
+    public function resendLoginOtp(OtpResendRequest $request)
+    {
+        try {
+            $challenge = $this->otp->resend(
+                $request->validated('challengeId'),
+                EmailOtp::PURPOSE_LOGIN,
+            );
+        } catch (OtpException $exception) {
+            return $this->fail($exception->getMessage(), $exception->status);
+        }
+
+        return $this->ok(
+            $this->otp->payload($challenge),
+            'A new verification code was sent to your registered email.'
+        );
     }
 
     public function logout(Request $request)

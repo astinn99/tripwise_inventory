@@ -10,8 +10,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'pr_number', 'source_request', 'supply_request_id', 'department', 'item_code',
-    'item_name', 'quantity', 'reason', 'priority', 'status', 'date_created',
-    'estimated_cost', 'selected_supplier', 'po_number',
+    'item_name', 'quantity', 'reason', 'priority', 'needed_in_days', 'status', 'date_created',
+    'estimated_cost', 'selected_supplier', 'po_number', 'rfq_overdue_notified_at',
 ])]
 class ProcurementRequest extends Model
 {
@@ -26,6 +26,8 @@ class ProcurementRequest extends Model
             'date_created' => 'date',
             'estimated_cost' => 'float',
             'quantity' => 'integer',
+            'needed_in_days' => 'integer',
+            'rfq_overdue_notified_at' => 'datetime',
         ];
     }
 

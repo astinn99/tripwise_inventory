@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ClipboardList, PackageCheck, Send, Filter } from 'lucide-react';
 import { ItemIdentity, itemImageUrl } from '../components/ui/ItemThumb';
+import { normalizePriority, priorityBadgeClass } from '../services/priority';
 
 const normalizeSupplyStatus = (status) => {
   const value = String(status || '').trim();
@@ -97,7 +98,7 @@ export const SupplyRequests = () => {
         </div>
 
         <div className="table-responsive">
-          <table className="custom-table">
+          <table className="custom-table table-stack">
             <thead>
               <tr>
                 <th>Request ID</th>
@@ -118,15 +119,15 @@ export const SupplyRequests = () => {
                 const minStock = invItem ? invItem.minStockLevel : 0;
                 const stockAvailability = req.stockAvailability || 'Pending';
                 const status = normalizeSupplyStatus(req.status);
-                const priority = req.priority || 'MEDIUM';
+                const priority = normalizePriority(req.priority);
                 const canCheckStock = status === 'Pending';
                 const canRelease = status === 'Ready for Release';
 
                 return (
                   <tr key={req.id}>
-                    <td className="font-mono text-xs text-blue font-bold">{req.id}</td>
-                    <td className="font-bold text-xs text-primary">{req.requestingDepartment}</td>
-                    <td>
+                    <td data-label="Request ID" className="font-mono text-xs text-blue font-bold">{req.id}</td>
+                    <td data-label="Requesting Dept" className="font-bold text-xs text-primary">{req.requestingDepartment}</td>
+                    <td data-label="Item & Code">
                       <ItemIdentity
                         src={itemImageUrl(req, inventory)}
                         name={req.itemName}
@@ -134,24 +135,24 @@ export const SupplyRequests = () => {
                         extra={`(Stock: ${currentStock} | Min: ${minStock})`}
                       />
                     </td>
-                    <td className="text-center font-bold text-xs">{req.quantityRequested}</td>
-                    <td className="text-xs text-secondary">{req.requiredDate}</td>
-                    <td>
-                      <span className={`badge ${priority === 'URGENT' ? 'badge-urgent' : priority === 'HIGH' ? 'badge-low-stock' : 'badge-info'}`}>
+                    <td data-label="Qty" className="text-center font-bold text-xs">{req.quantityRequested}</td>
+                    <td data-label="Required Date" className="text-xs text-secondary">{req.requiredDate}</td>
+                    <td data-label="Priority">
+                      <span className={`badge ${priorityBadgeClass(priority)}`}>
                         {priority}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Stock Availability">
                       <span className={`badge badge-${stockAvailability.toLowerCase().replace(/ /g, '-')}`}>
                         {stockAvailability}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Status">
                       <span className={`badge badge-${status.toLowerCase().replace(/ /g, '-')}`}>
                         {status}
                       </span>
                     </td>
-                    <td className="table-actions">
+                    <td data-label="Actions" className="table-actions table-stack-actions">
                       {canCheckStock && (
                         <button
                           type="button"

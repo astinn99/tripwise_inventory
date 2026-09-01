@@ -2,16 +2,26 @@
 
 namespace Tests\Feature;
 
+use App\Mail\EmailOtpMail;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use Tests\Concerns\CompletesEmailOtp;
 use Tests\TestCase;
 
 class VendorRegistrationTest extends TestCase
 {
+    use CompletesEmailOtp;
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Mail::fake();
+    }
 
     public function test_vendor_can_register_with_credentials(): void
     {
@@ -24,12 +34,16 @@ class VendorRegistrationTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'Pending Approval')
-            ->assertJsonPath('data.email', 'vendor@acme.test');
+            ->assertJsonPath('data.email', 'vendor@acme.test')
+            ->assertJsonPath('data.requiresOtp', true)
+            ->assertJsonPath('data.emailMasked', 'v***@acme.test');
 
         $this->assertDatabaseHas('users', [
             'email' => 'vendor@acme.test',
             'role' => User::ROLE_SUPPLIER,
         ]);
+        $this->assertNull(User::query()->where('email', 'vendor@acme.test')->value('email_verified_at'));
+        Mail::assertSent(EmailOtpMail::class, fn (EmailOtpMail $mail) => $mail->hasTo('vendor@acme.test'));
 
         $supplier = Supplier::query()->where('email', 'vendor@acme.test')->first();
         $this->assertNotNull($supplier);
@@ -51,11 +65,9 @@ class VendorRegistrationTest extends TestCase
     {
         Storage::fake('public');
 
-        $this->post('/api/vendor/register', $this->validPayload(), [
-            'Accept' => 'application/json',
-        ])->assertCreated();
+        $this->registerAndVerifyVendor($this->validPayload())->assertOk();
 
-        $this->postJson('/api/login', [
+        $this->loginWithOtp([
             'email' => 'vendor@acme.test',
             'password' => 'password1',
             'portal' => 'vendor',
@@ -68,11 +80,9 @@ class VendorRegistrationTest extends TestCase
     {
         Storage::fake('public');
 
-        $this->post('/api/vendor/register', $this->validPayload(), [
-            'Accept' => 'application/json',
-        ])->assertCreated();
+        $this->registerAndVerifyVendor($this->validPayload())->assertOk();
 
-        $this->postJson('/api/login', [
+        $this->loginWithOtp([
             'email' => 'Vendor@Acme.TEST',
             'password' => 'password1',
             'portal' => 'vendor',

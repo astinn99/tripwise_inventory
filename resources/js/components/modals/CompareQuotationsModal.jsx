@@ -1,8 +1,9 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { FileSpreadsheet, Truck, Shield, DollarSign, CheckCircle2, Award, Star } from 'lucide-react';
+import { FileSpreadsheet, Truck, Shield, DollarSign, CheckCircle2, Award, Star, BookOpen } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { ItemThumb } from '../ui/ItemThumb';
+import { normalizePriority, priorityBadgeClass, quoteRankLabel, rankQuotes } from '../../services/priority';
 
 export const CompareQuotationsModal = () => {
   const { activeModal, setActiveModal, modalData, quotations, selectSupplierAndCreatePO } = useApp();
@@ -10,10 +11,13 @@ export const CompareQuotationsModal = () => {
   if (activeModal !== 'compare_quotes' || !modalData) return null;
 
   const pr = modalData;
-  const relatedQuotes = quotations.filter(q => q.procurementId === pr.id);
-  const lowestPrice = relatedQuotes.length > 0
-    ? Math.min(...relatedQuotes.map(q => Number(q.totalPrice)))
-    : 0;
+  const priority = normalizePriority(pr.priority);
+  const relatedQuotes = rankQuotes(
+    quotations.filter((q) => q.procurementId === pr.id),
+    priority
+  );
+  const recommendedId = relatedQuotes[0]?.id;
+  const rankLabel = quoteRankLabel(priority);
 
   const handleSelectSupplier = (quoteId) => {
     selectSupplierAndCreatePO(pr.id, quoteId);
@@ -27,7 +31,11 @@ export const CompareQuotationsModal = () => {
       tone="blue"
       size="xl"
       title={`Quotation Comparison — ${pr.id}`}
-      subtitle="Review supplier offers, terms, and best value before creating a purchase order."
+      subtitle={priority === 'URGENT'
+        ? 'Urgent stock: rank fastest delivery first, then price.'
+        : priority === 'HIGH'
+          ? 'High priority: balance delivery speed with price.'
+          : 'Review supplier offers, terms, and best value before creating a purchase order.'}
       footer={(
         <button onClick={() => setActiveModal(null)} className="btn btn-outline btn-sm">Close</button>
       )}
@@ -39,7 +47,7 @@ export const CompareQuotationsModal = () => {
           <h4>{pr.itemName}</h4>
           <div className="modal-chip-row">
             <span className="modal-chip">Qty needed: {pr.quantity}</span>
-            <span className="modal-chip">Priority: {pr.priority}</span>
+            <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>
           </div>
         </div>
         <div className="modal-hero-aside">
@@ -56,10 +64,10 @@ export const CompareQuotationsModal = () => {
       ) : (
         <div className="grid-3 gap-4">
           {relatedQuotes.map((quote) => {
-            const isBestValue = Number(quote.totalPrice) === lowestPrice;
+            const isRecommended = quote.id === recommendedId;
             const cardClass = quote.status === 'Selected'
               ? 'modal-quote-card is-selected'
-              : isBestValue
+              : isRecommended
                 ? 'modal-quote-card is-best'
                 : 'modal-quote-card';
 
@@ -70,9 +78,9 @@ export const CompareQuotationsModal = () => {
                     <div>
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <span className="text-xs font-mono font-bold">{quote.id}</span>
-                        {isBestValue && (
+                        {isRecommended && (
                           <span className="badge badge-normal">
-                            <Award className="w-3 h-3" /> Best Price
+                            <Award className="w-3 h-3" /> {rankLabel}
                           </span>
                         )}
                       </div>
@@ -109,7 +117,23 @@ export const CompareQuotationsModal = () => {
                     </div>
                     <div className="modal-dl-row">
                       <span><Shield className="w-3.5 h-3.5" /> Warranty</span>
-                      <strong>{quote.warrantyLabel || quote.warranty || '—'}</strong>
+                      <strong>
+                        {quote.warrantyLabel || quote.warranty || 'None'}
+                        {quote.warrantyFileUrl ? (
+                          <>
+                            {' · '}
+                            <a href={quote.warrantyFileUrl} target="_blank" rel="noreferrer">Certificate</a>
+                          </>
+                        ) : null}
+                      </strong>
+                    </div>
+                    <div className="modal-dl-row">
+                      <span><BookOpen className="w-3.5 h-3.5" /> Guide / Manual</span>
+                      <strong>
+                        {quote.manualFileUrl ? (
+                          <a href={quote.manualFileUrl} target="_blank" rel="noreferrer">View guide / manual</a>
+                        ) : 'None'}
+                      </strong>
                     </div>
                     <div className="modal-dl-row">
                       <span><DollarSign className="w-3.5 h-3.5" /> Payment</span>

@@ -89,7 +89,7 @@ export const StockMonitoring = () => {
         </div>
 
         <div className="table-responsive">
-          <table className="custom-table">
+          <table className="custom-table table-stack">
             <thead>
               <tr>
                 <th>Item Code</th>
@@ -110,15 +110,15 @@ export const StockMonitoring = () => {
 
                 return (
                   <tr key={item.id}>
-                    <td className="font-mono text-xs text-blue font-bold">{item.itemCode}</td>
-                    <td>
+                    <td data-label="Item Code" className="font-mono text-xs text-blue font-bold">{item.itemCode}</td>
+                    <td data-label="Item Name">
                       <ItemIdentity
                         src={item.imageUrl}
                         name={item.description}
                       />
                     </td>
-                    <td className="text-xs text-black font-semibold">{item.category}</td>
-                    <td className="text-center font-extrabold text-lg">
+                    <td data-label="Category" className="text-xs text-black font-semibold">{item.category}</td>
+                    <td data-label="Current Stock" className="text-center font-extrabold text-lg">
                       <span className={item.status === 'OUT OF STOCK' ? 'text-danger' : item.status === 'LOW STOCK' ? 'text-warning' : 'text-success'}>
                         {item.quantity} {item.unit}
                       </span>
@@ -126,18 +126,18 @@ export const StockMonitoring = () => {
                         <div className="text-xs text-danger font-bold">{item.damagedQuantity} quarantined</div>
                       )}
                     </td>
-                    <td className="text-center font-bold text-warning text-sm">{item.minStockLevel}</td>
-                    <td>
+                    <td data-label="Min Safety Level" className="text-center font-bold text-warning text-sm">{item.minStockLevel}</td>
+                    <td data-label="Stock Status">
                       <span className={`badge badge-${item.status.toLowerCase().replace(/ /g, '-')}`}>
                         {item.status}
                       </span>
                     </td>
-                    <td className="text-xs font-mono text-black font-semibold">{item.location}</td>
-                    <td className="text-xs text-black font-semibold">
+                    <td data-label="Location" className="text-xs font-mono text-black font-semibold">{item.location}</td>
+                    <td data-label="Last Movement" className="text-xs text-black font-semibold">
                       {lastMov ? `${lastMov.date} (${lastMov.movementType})` : 'No recent movement'}
                     </td>
-                    <td className="text-xs text-black font-semibold">{item.supplier}</td>
-                    <td className="text-right">
+                    <td data-label="Supplier" className="text-xs text-black font-semibold">{item.supplier}</td>
+                    <td data-label="Action" className="text-right table-stack-actions">
                       <button
                         onClick={() => openRestock(item)}
                         className={`btn btn-sm ${item.status === 'NORMAL' ? 'btn-outline' : 'btn-warning'}`}

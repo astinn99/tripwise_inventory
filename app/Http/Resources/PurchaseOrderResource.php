@@ -2,10 +2,13 @@
 
 namespace App\Http\Resources;
 
+use App\Models\PurchaseOrder;
+use App\Support\Priority;
+use App\Support\WarrantyDuration;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-/** @mixin \App\Models\PurchaseOrder */
+/** @mixin PurchaseOrder */
 class PurchaseOrderResource extends JsonResource
 {
     public function toArray(Request $request): array
@@ -32,11 +35,14 @@ class PurchaseOrderResource extends JsonResource
             'budgetReference' => $this->budget_reference,
             'paymentTerms' => $this->payment_terms,
             'procurementReason' => $this->procurement_reason,
+            'priority' => Priority::normalize($this->priority ?: ($this->relationLoaded('procurementRequest') ? $this->procurementRequest?->priority : null)),
             'deliveryDate' => $this->delivery_date,
+            'confirmBy' => optional($this->confirm_by)?->format('Y-m-d'),
             'warranty' => $this->warranty,
             'warrantyMonths' => $this->warranty_months,
-            'warrantyLabel' => \App\Support\WarrantyDuration::label($this->warranty_months, $this->warranty),
+            'warrantyLabel' => WarrantyDuration::label($this->warranty_months, $this->warranty),
             'warrantyFileUrl' => $this->warranty_file_path ? '/storage/'.$this->warranty_file_path : null,
+            'manualFileUrl' => $this->manual_file_path ? '/storage/'.$this->manual_file_path : null,
             'financeApprovalStatus' => $this->finance_approval_status,
             'poStatus' => $this->po_status,
             'createdDate' => optional($this->created_date)?->format('Y-m-d'),

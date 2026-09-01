@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\Priority;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -22,7 +23,7 @@ class SupplyRequestResource extends JsonResource
             'category' => $this->category,
             'quantityRequested' => $this->quantity_requested,
             'requiredDate' => optional($this->required_date)?->format('Y-m-d'),
-            'priority' => $this->priority ?: 'MEDIUM',
+            'priority' => Priority::normalize($this->priority),
             'stockAvailability' => $this->stock_availability ?: 'Pending',
             'status' => $this->status === 'Received' ? 'Pending' : ($this->status ?: 'Pending'),
             'requestedBy' => $this->requested_by,
@@ -46,7 +47,7 @@ class SupplyRequestResource extends JsonResource
                         'imageUrl' => $imageUrl,
                         'quantity' => $pr->quantity,
                         'reason' => $pr->reason,
-                        'priority' => $pr->priority,
+                        'priority' => Priority::normalize($pr->priority),
                         'status' => $pr->status,
                         'dateCreated' => optional($pr->date_created)?->format('Y-m-d'),
                         'estimatedCost' => (float) $pr->estimated_cost,

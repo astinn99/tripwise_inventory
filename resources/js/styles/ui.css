@@ -1,4 +1,4 @@
-/* Modern, simple UI layer. Colors stay on the existing palette. */
+
 
 .user-avatar svg {
   color: #FFFFFF !important;
@@ -6,11 +6,18 @@
 
 .app-shell {
   background: var(--bg-main);
+  width: 100%;
+}
+
+#app,
+.main-wrapper {
+  width: 100%;
+  max-width: none;
 }
 
 .main-content {
   padding: 1.75rem 2rem 2.5rem;
-  max-width: 1680px;
+  max-width: none;
   width: 100%;
 }
 
@@ -46,7 +53,7 @@
 }
 
 .kpi-grid {
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 0.9rem;
   margin-bottom: 1.35rem;
 }
@@ -110,19 +117,29 @@
 }
 
 .app-header {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(220px, 460px) minmax(160px, 1fr);
-  gap: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.header-left {
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .header-center {
-  max-width: none;
-  width: 100%;
-  margin: 0;
+  flex: 1 1 auto;
+  max-width: 460px;
+  width: auto;
+  margin: 0 1.5rem;
 }
 
 .header-right {
-  justify-self: end;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .table-responsive {
@@ -244,6 +261,61 @@
   margin-top: 0.25rem;
 }
 
+.otp-boxes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.4rem;
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.otp-box {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 3.1rem;
+  padding: 0;
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 10px;
+  background: #FFFFFF;
+  color: #111827;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1;
+  caret-color: #E11D48;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.otp-box.is-filled {
+  border-color: #FECDD3;
+}
+
+.otp-box:focus {
+  outline: none;
+  border-color: #E11D48;
+  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.16);
+}
+
+.otp-box.is-error {
+  border-color: var(--border-danger);
+}
+
+.otp-box:disabled {
+  opacity: 0.7;
+}
+
+@media (max-width: 420px) {
+  .otp-boxes {
+    gap: 0.3rem;
+  }
+
+  .otp-box {
+    height: 2.75rem;
+    font-size: 1.1rem;
+  }
+}
+
 .login-error {
   background: var(--bg-danger-light);
   border: 1px solid var(--border-danger);
@@ -284,6 +356,10 @@
 
 .login-card-register {
   max-width: 760px;
+}
+
+.login-card-register.login-card-otp {
+  max-width: 420px;
 }
 
 .login-section {
@@ -620,5 +696,53 @@
 
   .app-header {
     padding: 0 1.25rem;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-header {
+    padding: 0.65rem 1.15rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-wrap: wrap;
+    row-gap: 0.65rem;
+  }
+
+  .header-left {
+    min-width: 0;
+  }
+
+  .header-center {
+    flex: 1 1 100%;
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    order: 3;
+  }
+
+  .header-right {
+    margin-left: auto;
+    gap: 0.5rem;
+  }
+
+  .main-content {
+    padding: 1rem 0.85rem 1.5rem;
+  }
+
+  .header-page-label {
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    padding: 0.85rem 0.7rem 1.25rem;
+  }
+
+  .app-header {
+    padding: 0.6rem 0.7rem;
   }
 }

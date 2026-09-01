@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Support\Priority;
 use Illuminate\Foundation\Http\FormRequest;
 
 class ManualProcurementRequest extends FormRequest
@@ -17,7 +18,8 @@ class ManualProcurementRequest extends FormRequest
             'itemCode' => ['required', 'string', 'exists:inventory_items,item_code'],
             'quantity' => ['required', 'integer', 'min:1'],
             'reason' => ['required', 'string', 'max:2000'],
-            'priority' => ['required', 'string', 'max:32'],
+            'priority' => Priority::rule(required: true),
+            'neededInDays' => ['nullable', 'integer', 'min:1', 'max:90'],
         ];
     }
 }

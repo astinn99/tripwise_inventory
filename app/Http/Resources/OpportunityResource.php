@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\Priority;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -12,6 +13,12 @@ class OpportunityResource extends JsonResource
     {
         $pr = $this->relationLoaded('procurementRequest') ? $this->procurementRequest : null;
         $catalog = $pr?->relationLoaded('catalogItem') ? $pr->catalogItem : null;
+        $priority = Priority::normalize($pr?->priority);
+        $deadline = optional($this->deadline)?->format('Y-m-d');
+        $neededInDays = Priority::neededInDays($priority, $pr?->needed_in_days);
+        $neededBy = $this->created_at
+            ? $this->created_at->copy()->startOfDay()->addDays($neededInDays)->format('Y-m-d')
+            : $deadline;
 
         return [
             'id' => $this->opportunity_number,
@@ -22,8 +29,13 @@ class OpportunityResource extends JsonResource
             'imageUrl' => $catalog?->imageUrl(),
             'category' => $this->category,
             'quantity' => $this->quantity,
-            'priority' => $pr?->priority,
-            'deadline' => optional($this->deadline)?->format('Y-m-d'),
+            'priority' => $priority,
+            'deadline' => $deadline,
+            'neededBy' => $neededBy,
+            'neededInDays' => $neededInDays,
+            'quoteWindowDays' => Priority::quoteDays($priority),
+            'preferredMaxDeliveryDays' => $neededInDays,
+            'isOverdue' => $deadline !== null && $deadline < now()->toDateString(),
             'budgetRange' => $this->budget_range,
             'status' => $this->status,
             'requirements' => $this->requirements,

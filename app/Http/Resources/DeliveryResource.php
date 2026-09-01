@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\Priority;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,6 +15,7 @@ class DeliveryResource extends JsonResource
             'id' => $this->delivery_number,
             'poNumber' => $this->po_number,
             'supplier' => $this->supplier,
+            'priority' => Priority::normalize($this->relationLoaded('purchaseOrder') ? $this->purchaseOrder?->priority : null),
             'deliveryDate' => $this->delivery_date,
             'itemsCount' => $this->items_count,
             'status' => $this->status,

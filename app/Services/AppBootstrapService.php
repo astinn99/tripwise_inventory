@@ -31,6 +31,7 @@ use App\Models\Supplier;
 use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
+use App\Support\Priority;
 use Carbon\Carbon;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
@@ -191,11 +192,11 @@ class AppBootstrapService
     private function purchaseOrdersPayload(?int $supplierId = null): array
     {
         return $this->resolve(PurchaseOrderResource::collection(
-                PurchaseOrder::query()
-                    ->with(['items', 'procurementRequest:id,pr_number', 'supplierAccount:id,code'])
-                    ->when($supplierId !== null, fn ($query) => $query->where('supplier_id', $supplierId))
-                    ->orderByDesc('id')
-                    ->get()
+            PurchaseOrder::query()
+                ->with(['items', 'procurementRequest:id,pr_number,priority', 'supplierAccount:id,code'])
+                ->when($supplierId !== null, fn ($query) => $query->where('supplier_id', $supplierId))
+                ->orderByDesc('id')
+                ->get()
         ));
     }
 
@@ -204,17 +205,7 @@ class AppBootstrapService
         $supplierId = $user->supplier_id;
 
         return $this->resolve(OpportunityResource::collection(
-            SupplierOpportunity::query()
-                ->with('procurementRequest.catalogItem:id,item_code,code,image_path')
-                ->when($supplierId, function ($query) use ($supplierId) {
-                    $query->where('supplier_id', $supplierId)
-                        ->where('status', 'Open for Quotation')
-                        ->whereDoesntHave('procurementRequest.quotations', function ($quotes) use ($supplierId) {
-                            $quotes->where('supplier_id', $supplierId);
-                        });
-                })
-                ->orderByDesc('id')
-                ->get()
+            SupplierOpportunity::rankedForVendor($supplierId, openOnly: (bool) $supplierId)
         ));
     }
 
@@ -223,7 +214,7 @@ class AppBootstrapService
         return $this->resolve(QuotationResource::collection(
             Quotation::query()
                 ->with([
-                    'procurementRequest:id,pr_number,item_code,item_name,selected_supplier,po_number',
+                    'procurementRequest:id,pr_number,item_code,item_name,selected_supplier,po_number,priority',
                     'procurementRequest.catalogItem:id,item_code,code,image_path',
                     'supplier:id,code,company_name',
                 ])
@@ -280,7 +271,10 @@ class AppBootstrapService
     private function deliveriesPayload(): array
     {
         return $this->resolve(DeliveryResource::collection(
-            Delivery::query()->with('items')->orderByDesc('id')->get()
+            Priority::sortRecords(
+                Delivery::query()->with(['items', 'purchaseOrder:id,priority'])->orderByDesc('id')->get(),
+                'purchaseOrder.priority'
+            )
         ));
     }
 
@@ -316,7 +310,8 @@ class AppBootstrapService
         return $this->resolve(ProcurementRequestResource::collection(
             ProcurementRequest::query()
                 ->with('catalogItem:id,item_code,code,image_path')
-                ->withCount('opportunities')
+                ->withCount(['opportunities', 'quotations'])
+                ->withMin('opportunities', 'deadline')
                 ->orderByDesc('id')
                 ->get()
         ));
@@ -327,22 +322,12 @@ class AppBootstrapService
         $supplierId = $user->supplier_id;
 
         $purchaseOrders = PurchaseOrder::query()
-            ->with(['items', 'procurementRequest:id,pr_number', 'supplierAccount:id,code'])
+            ->with(['items', 'procurementRequest:id,pr_number,priority', 'supplierAccount:id,code'])
             ->when($supplierId, fn ($query) => $query->where('supplier_id', $supplierId))
             ->orderByDesc('id')
             ->get();
 
-        $opportunities = SupplierOpportunity::query()
-            ->with('procurementRequest.catalogItem:id,item_code,code,image_path')
-            ->when($supplierId, function ($query) use ($supplierId) {
-                $query->where('supplier_id', $supplierId)
-                    ->where('status', 'Open for Quotation')
-                    ->whereDoesntHave('procurementRequest.quotations', function ($quotes) use ($supplierId) {
-                        $quotes->where('supplier_id', $supplierId);
-                    });
-            })
-            ->orderByDesc('id')
-            ->get();
+        $opportunities = SupplierOpportunity::rankedForVendor($supplierId, openOnly: (bool) $supplierId);
 
         return [
             'quotations' => $this->quotationsPayload($supplierId),
@@ -354,6 +339,8 @@ class AppBootstrapService
 
     private function internalCore(): array
     {
+        app(SupplyChainService::class)->flagOverdueRfqs();
+
         if (DB::connection()->getDriverName() === 'pgsql') {
             return $this->internalCoreRemote();
         }
@@ -403,13 +390,16 @@ class AppBootstrapService
             'quotations' => $this->quotationsPayload(),
             'purchaseOrders' => $this->resolve(PurchaseOrderResource::collection(
                 PurchaseOrder::query()
-                    ->with(['items', 'procurementRequest:id,pr_number', 'supplierAccount:id,code'])
+                    ->with(['items', 'procurementRequest:id,pr_number,priority', 'supplierAccount:id,code'])
                     ->orderByDesc('id')
                     ->get()
             )),
             'suppliers' => $this->suppliersPayload(),
             'deliveries' => $this->resolve(DeliveryResource::collection(
-                Delivery::query()->with('items')->orderByDesc('id')->get()
+                Priority::sortRecords(
+                    Delivery::query()->with(['items', 'purchaseOrder:id,priority'])->orderByDesc('id')->get(),
+                    'purchaseOrder.priority'
+                )
             )),
             'stockCounts' => $this->resolve(StockCountResource::collection(
                 StockCount::query()->with('items')->orderByDesc('id')->get()
@@ -437,17 +427,20 @@ class AppBootstrapService
                 InventoryMovement::query()->orderByDesc('id')->get()
             )),
             'deliveries' => $this->resolve(DeliveryResource::collection(
-                Delivery::query()->with('items')->orderByDesc('id')->get()
+                Priority::sortRecords(
+                    Delivery::query()->with(['items', 'purchaseOrder:id,priority'])->orderByDesc('id')->get(),
+                    'purchaseOrder.priority'
+                )
             )),
             'stockCounts' => $this->resolve(StockCountResource::collection(
                 StockCount::query()->with('items')->orderByDesc('id')->get()
             )),
             'opportunities' => $this->resolve(OpportunityResource::collection(
-                SupplierOpportunity::query()->with('procurementRequest.catalogItem:id,item_code,code,image_path')->orderByDesc('id')->get()
+                SupplierOpportunity::rankedForVendor()
             )),
             'purchaseOrders' => $this->resolve(PurchaseOrderResource::collection(
                 PurchaseOrder::query()
-                    ->with(['items', 'timeline', 'procurementRequest:id,pr_number', 'supplierAccount:id,code'])
+                    ->with(['items', 'timeline', 'procurementRequest:id,pr_number,priority', 'supplierAccount:id,code'])
                     ->orderByDesc('id')
                     ->get()
             )),
@@ -503,7 +496,11 @@ SELECT
             'category', sr.category,
             'quantityRequested', sr.quantity_requested,
             'requiredDate', to_char(sr.required_date, 'YYYY-MM-DD'),
-            'priority', COALESCE(NULLIF(sr.priority, ''), 'MEDIUM'),
+            'priority', CASE
+                WHEN UPPER(BTRIM(COALESCE(sr.priority, ''))) = 'URGENT' THEN 'URGENT'
+                WHEN UPPER(BTRIM(COALESCE(sr.priority, ''))) = 'HIGH' THEN 'HIGH'
+                ELSE 'NORMAL'
+            END,
             'stockAvailability', COALESCE(NULLIF(sr.stock_availability, ''), 'Pending'),
             'status', CASE WHEN sr.status = 'Received' THEN 'Pending' ELSE COALESCE(NULLIF(sr.status, ''), 'Pending') END,
             'requestedBy', sr.requested_by,
@@ -530,13 +527,34 @@ SELECT
             'imageUrl', CASE WHEN NULLIF(img.image_path, '') IS NULL THEN NULL ELSE '/storage/' || img.image_path END,
             'quantity', pr.quantity,
             'reason', pr.reason,
-            'priority', pr.priority,
+            'priority', CASE
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'URGENT' THEN 'URGENT'
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'HIGH' THEN 'HIGH'
+                ELSE 'NORMAL'
+            END,
+            'neededInDays', COALESCE(pr.needed_in_days, CASE
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'URGENT' THEN 3
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'HIGH' THEN 7
+                ELSE 14
+            END),
+            'quoteWindowDays', CASE
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'URGENT' THEN 2
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'HIGH' THEN 5
+                ELSE 10
+            END,
             'status', pr.status,
             'dateCreated', to_char(pr.date_created, 'YYYY-MM-DD'),
             'estimatedCost', pr.estimated_cost,
             'selectedSupplier', pr.selected_supplier,
             'poNumber', pr.po_number,
             'vendorInviteCount', COALESCE(invites.invite_count, 0),
+            'quoteCount', COALESCE(quotes.quote_count, 0),
+            'quoteDeadline', to_char(deadlines.min_deadline, 'YYYY-MM-DD'),
+            'rfqOverdue', COALESCE(quotes.quote_count, 0) = 0
+                AND deadlines.min_deadline IS NOT NULL
+                AND deadlines.min_deadline < CURRENT_DATE
+                AND COALESCE(pr.po_number, '') = ''
+                AND COALESCE(pr.selected_supplier, '') = '',
             'canEdit', pr.status = 'For Procurement' AND COALESCE(pr.po_number, '') = '',
             'sentToVendors', pr.status <> 'For Procurement' OR COALESCE(invites.invite_count, 0) > 0
         ) AS obj, pr.id
@@ -551,6 +569,16 @@ SELECT
             FROM supplier_opportunities so
             WHERE so.procurement_request_id = pr.id
         ) invites ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS quote_count
+            FROM quotations q
+            WHERE q.procurement_request_id = pr.id
+        ) quotes ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT MIN(so.deadline) AS min_deadline
+            FROM supplier_opportunities so
+            WHERE so.procurement_request_id = pr.id
+        ) deadlines ON TRUE
     ) procurement_rows) AS procurement_requests,
 
     (SELECT COALESCE(json_agg(obj ORDER BY id DESC), '[]'::json) FROM (
@@ -569,6 +597,7 @@ SELECT
             'warrantyMonths', q.warranty_months,
             'warrantyLabel', NULL,
             'warrantyFileUrl', CASE WHEN NULLIF(q.warranty_file_path, '') IS NULL THEN NULL ELSE '/storage/' || q.warranty_file_path END,
+            'manualFileUrl', CASE WHEN NULLIF(q.manual_file_path, '') IS NULL THEN NULL ELSE '/storage/' || q.manual_file_path END,
             'itemPhotoUrls', COALESCE((
                 SELECT json_agg('/storage/' || photo_path)
                 FROM json_array_elements_text(COALESCE(q.item_photo_paths::text, '[]')::json) AS photo_path
@@ -577,6 +606,11 @@ SELECT
             'deliveryTimeDays', q.delivery_time_days,
             'qualityRating', q.quality_rating,
             'paymentTerms', q.payment_terms,
+            'priority', CASE
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'URGENT' THEN 'URGENT'
+                WHEN UPPER(BTRIM(COALESCE(pr.priority, ''))) = 'HIGH' THEN 'HIGH'
+                ELSE 'NORMAL'
+            END,
             'status', q.status,
             'notes', q.notes,
             'canEdit', q.status NOT IN ('Selected', 'Accepted', 'Rejected')
@@ -616,11 +650,18 @@ SELECT
             'budgetReference', po.budget_reference,
             'paymentTerms', po.payment_terms,
             'procurementReason', po.procurement_reason,
+            'priority', CASE
+                WHEN UPPER(BTRIM(COALESCE(po.priority, pr.priority, ''))) = 'URGENT' THEN 'URGENT'
+                WHEN UPPER(BTRIM(COALESCE(po.priority, pr.priority, ''))) = 'HIGH' THEN 'HIGH'
+                ELSE 'NORMAL'
+            END,
             'deliveryDate', po.delivery_date,
+            'confirmBy', to_char(po.confirm_by, 'YYYY-MM-DD'),
             'warranty', po.warranty,
             'warrantyMonths', po.warranty_months,
             'warrantyLabel', NULL,
             'warrantyFileUrl', CASE WHEN NULLIF(po.warranty_file_path, '') IS NULL THEN NULL ELSE '/storage/' || po.warranty_file_path END,
+            'manualFileUrl', CASE WHEN NULLIF(po.manual_file_path, '') IS NULL THEN NULL ELSE '/storage/' || po.manual_file_path END,
             'financeApprovalStatus', po.finance_approval_status,
             'poStatus', po.po_status,
             'createdDate', to_char(po.created_date, 'YYYY-MM-DD'),
@@ -683,6 +724,11 @@ SELECT
             'id', d.delivery_number,
             'poNumber', d.po_number,
             'supplier', d.supplier,
+            'priority', CASE
+                WHEN UPPER(BTRIM(COALESCE(po.priority, ''))) = 'URGENT' THEN 'URGENT'
+                WHEN UPPER(BTRIM(COALESCE(po.priority, ''))) = 'HIGH' THEN 'HIGH'
+                ELSE 'NORMAL'
+            END,
             'deliveryDate', d.delivery_date,
             'itemsCount', d.items_count,
             'status', d.status,
@@ -705,6 +751,7 @@ SELECT
             )
         ) AS obj, d.id
         FROM deliveries d
+        LEFT JOIN purchase_orders po ON po.id = d.purchase_order_id
     ) delivery_rows) AS deliveries,
 
     (SELECT COALESCE(json_agg(obj ORDER BY id DESC), '[]'::json) FROM (
