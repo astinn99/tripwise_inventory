@@ -193,28 +193,46 @@ export const Login = ({ portal = 'internal' }) => {
     if (isVendor) {
         if (view === 'register') {
             return (
-                <div className={`login-screen${registerAwaitingOtp ? '' : ' login-screen-register'}`}>
-                    <VendorRegister
-                        onCancel={() => {
-                            setRegisterAwaitingOtp(false);
-                            setView('login');
-                        }}
-                        onAwaitingOtp={setRegisterAwaitingOtp}
-                        onRegistered={(nextEmail) => {
-                            setRegisteredEmail(nextEmail);
-                            setEmail(nextEmail);
-                            setLocalError('');
-                            setInfoMessage('');
-                            setRegisterAwaitingOtp(false);
-                            resetChallenge();
-                            setView('login');
-                        }}
-                    />
+                <div className={`login-screen login-screen-vendor${registerAwaitingOtp ? '' : ' login-screen-vendor-register'}`}>
+                    <aside className="login-hero">
+                        <div className="login-hero-brand">
+                            <BrandLogo variant="hero" />
+                        </div>
+                    </aside>
+                    <div className="login-panel">
+                        <VendorRegister
+                            onCancel={() => {
+                                setRegisterAwaitingOtp(false);
+                                setView('login');
+                            }}
+                            onAwaitingOtp={setRegisterAwaitingOtp}
+                            onRegistered={(nextEmail) => {
+                                setRegisteredEmail(nextEmail);
+                                setEmail(nextEmail);
+                                setLocalError('');
+                                setInfoMessage('');
+                                setRegisterAwaitingOtp(false);
+                                resetChallenge();
+                                setView('login');
+                            }}
+                        />
+                    </div>
                 </div>
             );
         }
 
-        return <div className="login-screen">{card}</div>;
+        return (
+            <div className="login-screen login-screen-vendor">
+                <aside className="login-hero">
+                    <div className="login-hero-brand">
+                        <BrandLogo variant="hero" />
+                    </div>
+                </aside>
+                <div className="login-panel">
+                    {card}
+                </div>
+            </div>
+        );
     }
 
     return (

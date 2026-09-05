@@ -571,6 +571,72 @@
   }
 }
 
+.login-screen.login-screen-vendor {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: var(--bg-main);
+}
+
+.login-screen-vendor .login-hero {
+  background: var(--bg-main) url('/images/primo-mabuhay.png') center / contain no-repeat;
+}
+
+.login-screen-vendor .login-hero,
+.login-screen-vendor .login-hero-brand,
+.login-screen-vendor .login-hero-brand .brand-wordmark,
+.login-screen-vendor .login-hero-brand .brand-period {
+  text-shadow: none;
+}
+
+.login-screen-vendor .login-hero-brand .brand-wordmark {
+  color: var(--primary-accent);
+  font-size: 2.4rem;
+  text-shadow: none;
+}
+
+.login-screen-vendor .login-panel {
+  background: var(--bg-main);
+}
+
+.login-screen-vendor .login-card {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  box-shadow: var(--shadow-subtle);
+}
+
+.login-screen-vendor .login-card-register {
+  max-width: 760px;
+}
+
+.login-screen.login-screen-vendor-register {
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 56%);
+}
+
+.login-screen-vendor-register .login-panel {
+  align-items: flex-start;
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+
+@media (max-width: 960px) {
+  .login-screen.login-screen-vendor,
+  .login-screen.login-screen-vendor-register {
+    grid-template-columns: 1fr;
+  }
+
+  .login-screen-vendor .login-hero {
+    min-height: 280px;
+  }
+
+  .login-screen-vendor .login-panel {
+    min-height: auto;
+  }
+}
+
 .login-error {
   background: var(--bg-danger-light);
   border: 1px solid var(--border-danger);
