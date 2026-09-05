@@ -414,7 +414,10 @@ class AppBootstrapService
             )),
             'movements' => $this->resolve(InventoryMovementResource::collection($recentMovements)),
             'documents' => $this->resolve(DocumentResource::collection(
-                Document::query()->orderByDesc('id')->get()
+                Document::query()
+                    ->with(['inventoryItem:id,item_code', 'purchaseOrder:id,po_number', 'supplierAccount:id,company_name'])
+                    ->orderByDesc('id')
+                    ->get()
             )),
             'notifications' => $this->notificationsPayload(),
             'movementTrend' => $trends['movementTrend'],
@@ -841,11 +844,13 @@ SELECT
             'originalFilename', doc.original_filename,
             'source', doc.source,
             'warrantyMonths', doc.warranty_months,
-            'itemCode', NULL,
-            'purchaseOrderNumber', NULL
+            'itemCode', ii.item_code,
+            'purchaseOrderNumber', po_doc.po_number
         ) AS obj, doc.id
         FROM documents doc
         LEFT JOIN suppliers sa ON sa.id = doc.supplier_id AND sa.deleted_at IS NULL
+        LEFT JOIN inventory_items ii ON ii.id = doc.inventory_item_id AND ii.deleted_at IS NULL
+        LEFT JOIN purchase_orders po_doc ON po_doc.id = doc.purchase_order_id
         WHERE doc.deleted_at IS NULL
     ) document_rows) AS documents,
 

@@ -22,7 +22,10 @@ class ReportController extends Controller
         $orders = PurchaseOrder::query()->with(['items', 'timeline', 'procurementRequest', 'supplierAccount'])->get();
         $suppliers = Supplier::query()->get();
         $movements = InventoryMovement::query()->orderByDesc('id')->get();
-        $documents = Document::query()->orderByDesc('id')->get();
+        $documents = Document::query()
+            ->with(['inventoryItem:id,item_code', 'purchaseOrder:id,po_number', 'supplierAccount:id,company_name'])
+            ->orderByDesc('id')
+            ->get();
 
         return $this->ok([
             'inventory' => InventoryItemResource::collection($inventory),

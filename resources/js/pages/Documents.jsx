@@ -28,7 +28,7 @@ export const Documents = () => {
   const [file, setFile] = useState(null);
 
   const filteredDocs = documents.filter((doc) => {
-    const haystack = [doc.title, doc.referenceNumber, doc.supplier, doc.category, doc.itemCode]
+    const haystack = [doc.title, doc.referenceNumber, doc.supplier, doc.category, doc.itemCode, doc.purchaseOrderNumber]
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
@@ -119,6 +119,8 @@ export const Documents = () => {
                   <th>Reference #</th>
                   <th>Supplier / Issuer</th>
                   <th>Category</th>
+                  <th>Linked Item</th>
+                  <th>Linked PO</th>
                   <th>Issue Date</th>
                   <th>Expiration Date</th>
                   <th>Status</th>
@@ -134,11 +136,13 @@ export const Documents = () => {
                     <td className="font-mono text-xs text-purple-400">{doc.referenceNumber || '—'}</td>
                     <td className="text-xs text-slate-300">{doc.supplier || '—'}</td>
                     <td className="text-xs text-slate-400">{doc.category || '—'}</td>
+                    <td className="font-mono text-xs text-blue-400">{doc.itemCode || '—'}</td>
+                    <td className="font-mono text-xs text-purple-400">{doc.purchaseOrderNumber || '—'}</td>
                     <td className="text-xs text-slate-300">{doc.issueDate || '—'}</td>
                     <td className="text-xs font-bold text-amber-400">{doc.expirationDate || '—'}</td>
                     <td>
-                      <span className={`badge badge-${doc.status.toLowerCase().replace(/ /g, '-')}`}>
-                        {doc.status}
+                      <span className={`badge badge-${String(doc.status || 'active').toLowerCase().replace(/ /g, '-')}`}>
+                        {doc.status || 'Active'}
                       </span>
                     </td>
                     <td className="text-right">

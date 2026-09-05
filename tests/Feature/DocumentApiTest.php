@@ -66,6 +66,66 @@ class DocumentApiTest extends TestCase
             ->assertJsonPath('data.1.status', 'Active');
     }
 
+    public function test_linked_item_and_po_appear_on_documents_bootstrap_and_reports(): void
+    {
+        $user = User::factory()->create();
+        $item = InventoryItem::query()->create([
+            'code' => 'INV-LINK',
+            'item_code' => 'COM-LINK',
+            'description' => 'Linked radio',
+            'category' => 'Communication Devices',
+            'quantity' => 2,
+            'min_stock_level' => 1,
+            'unit' => 'Units',
+            'cost' => 500,
+        ]);
+        $po = PurchaseOrder::query()->create([
+            'po_number' => 'PO-2026-LINK',
+            'supplier' => 'Metro Parts Trading',
+            'total_cost' => 2000,
+            'finance_approval_status' => 'Finance Approved',
+            'po_status' => 'Confirmed',
+            'created_date' => now()->toDateString(),
+        ]);
+        Document::query()->create([
+            'document_number' => 'DOC-2026-LINK',
+            'title' => 'Linked warranty',
+            'type' => 'Warranty',
+            'reference_number' => $po->po_number,
+            'supplier' => $po->supplier,
+            'issue_date' => now()->toDateString(),
+            'expiration_date' => now()->addYear()->toDateString(),
+            'status' => 'Active',
+            'category' => $item->category,
+            'inventory_item_id' => $item->id,
+            'purchase_order_id' => $po->id,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/api/documents')
+            ->assertOk()
+            ->assertJsonPath('data.0.itemCode', 'COM-LINK')
+            ->assertJsonPath('data.0.purchaseOrderNumber', 'PO-2026-LINK');
+
+        $this->actingAs($user)
+            ->getJson('/api/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('data.documents.0.itemCode', 'COM-LINK')
+            ->assertJsonPath('data.documents.0.purchaseOrderNumber', 'PO-2026-LINK');
+
+        $this->actingAs($user)
+            ->getJson('/api/bootstrap?phase=more')
+            ->assertOk()
+            ->assertJsonPath('data.documents.0.itemCode', 'COM-LINK')
+            ->assertJsonPath('data.documents.0.purchaseOrderNumber', 'PO-2026-LINK');
+
+        $this->actingAs($user)
+            ->getJson('/api/reports')
+            ->assertOk()
+            ->assertJsonPath('data.documents.0.itemCode', 'COM-LINK')
+            ->assertJsonPath('data.documents.0.purchaseOrderNumber', 'PO-2026-LINK');
+    }
+
     public function test_expiry_command_notifies_once_per_window(): void
     {
         Document::query()->create([

@@ -1,15 +1,13 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { BarChart3, Download, Printer, Filter, Calendar, FileText, Package, ShoppingCart, Users, Truck } from 'lucide-react';
+import { BarChart3, Download, Printer, Calendar, FileText, Package, ShoppingCart, Users, Truck } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 export const Reports = () => {
   const {
     inventory,
-    procurementRequests,
     purchaseOrders,
     suppliers,
-    deliveries,
     movements,
     documents
   } = useApp();
@@ -32,6 +30,25 @@ export const Reports = () => {
     financeApprovedPOs: purchaseOrders.filter(p => p.financeApprovalStatus === 'Finance Approved').length,
     pendingFinancePOs: purchaseOrders.filter(p => p.financeApprovalStatus === 'Pending Finance Approval').length
   };
+
+  const warehouseSummary = {
+    totalLogs: movements.length,
+    receivedUnits: movements.filter((m) => m.movementType === 'Receiving').reduce((sum, m) => sum + Number(m.quantity || 0), 0),
+    releasedUnits: movements.filter((m) => m.movementType === 'Releasing').reduce((sum, m) => sum + Number(m.quantity || 0), 0),
+  };
+
+  const dtrsSummary = {
+    total: documents.length,
+    expiringSoon: documents.filter((d) => d.status === 'Expiring Soon').length,
+    expired: documents.filter((d) => d.status === 'Expired').length,
+  };
+
+  const dtrsChartData = Object.values(documents.reduce((acc, doc) => {
+    const type = doc.type || 'Other';
+    acc[type] = acc[type] || { type, count: 0 };
+    acc[type].count += 1;
+    return acc;
+  }, {}));
 
   return (
     <div className="reports-page">
@@ -245,12 +262,165 @@ export const Reports = () => {
         </div>
       )}
 
-      {/* 4 & 5 Warehouse & Document Reports */}
-      {(activeReportTab === 'warehouse' || activeReportTab === 'documents') && (
-        <div className="panel-card p-6 text-center text-slate-300">
-          <BarChart3 className="w-12 h-12 text-blue-400 mx-auto mb-2" />
-          <h3 className="text-base font-bold text-white capitalize">{activeReportTab} Operations Audit Report</h3>
-          <p className="text-xs text-slate-400 mt-1">Detailed transaction history, receiving/release audits, and DTRS contract expiration reports generated for date range: {dateRange}.</p>
+      {activeReportTab === 'warehouse' && (
+        <div>
+          <div className="grid-3 mb-4">
+            <div className="kpi-card border-blue-500/40">
+              <div className="kpi-header"><span className="kpi-title">MOVEMENT LOGS</span></div>
+              <div className="kpi-value text-blue-400">{warehouseSummary.totalLogs}</div>
+              <div className="kpi-footer">Receiving, releasing, and adjustments</div>
+            </div>
+            <div className="kpi-card border-emerald-500/40">
+              <div className="kpi-header"><span className="kpi-title">UNITS RECEIVED</span></div>
+              <div className="kpi-value text-emerald-400">{warehouseSummary.receivedUnits}</div>
+              <div className="kpi-footer">Posted from receiving inspections</div>
+            </div>
+            <div className="kpi-card border-rose-500/40">
+              <div className="kpi-header"><span className="kpi-title">UNITS RELEASED</span></div>
+              <div className="kpi-value text-rose-400">{warehouseSummary.releasedUnits}</div>
+              <div className="kpi-footer">Dispatched from warehouse</div>
+            </div>
+          </div>
+
+          <div className="panel-card">
+            <div className="panel-header">
+              <span className="panel-title"><Truck className="w-5 h-5 text-blue-400" /> Warehouse Movement Audit Report</span>
+            </div>
+            {movements.length === 0 ? (
+              <div className="empty-state">
+                <p>No warehouse movements recorded yet.</p>
+                <p>Receiving, releasing, transfers, and adjustments will appear here.</p>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Movement ID</th>
+                      <th>Item</th>
+                      <th>Type</th>
+                      <th className="text-center">Quantity</th>
+                      <th>Date</th>
+                      <th>Location</th>
+                      <th>Reference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movements.map((m) => (
+                      <tr key={m.id}>
+                        <td className="font-mono text-xs text-blue-400 font-bold">{m.id}</td>
+                        <td>
+                          <div className="font-bold text-xs text-white">{m.itemName || '—'}</div>
+                          <div className="font-mono text-xs text-slate-400">{m.itemCode || '—'}</div>
+                        </td>
+                        <td><span className={`badge badge-${String(m.movementType || 'adjustment').toLowerCase().replace(/ /g, '-')}`}>{m.movementType}</span></td>
+                        <td className="text-center font-bold">{m.quantity}</td>
+                        <td className="text-xs text-slate-300">{m.date || '—'}</td>
+                        <td className="text-xs text-slate-300">{m.location || '—'}</td>
+                        <td className="font-mono text-xs text-purple-400">{m.reference || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeReportTab === 'documents' && (
+        <div>
+          <div className="grid-3 mb-4">
+            <div className="kpi-card border-blue-500/40">
+              <div className="kpi-header"><span className="kpi-title">DTRS DOCUMENTS</span></div>
+              <div className="kpi-value text-blue-400">{dtrsSummary.total}</div>
+              <div className="kpi-footer">Warranties, contracts, and archived files</div>
+            </div>
+            <div className="kpi-card border-amber-500/40">
+              <div className="kpi-header"><span className="kpi-title">EXPIRING SOON</span></div>
+              <div className="kpi-value text-amber-400">{dtrsSummary.expiringSoon}</div>
+              <div className="kpi-footer">Within 30 days</div>
+            </div>
+            <div className="kpi-card border-rose-500/40">
+              <div className="kpi-header"><span className="kpi-title">EXPIRED</span></div>
+              <div className="kpi-value text-rose-400">{dtrsSummary.expired}</div>
+              <div className="kpi-footer">Past expiration date</div>
+            </div>
+          </div>
+
+          {dtrsChartData.length > 0 && (
+            <div className="panel-card mb-4">
+              <div className="panel-header">
+                <span className="panel-title"><BarChart3 className="w-5 h-5 text-blue-400" /> Documents by Type</span>
+              </div>
+              <div style={{ width: '100%', height: 250 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dtrsChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
+                    <XAxis dataKey="type" stroke="#000000" tick={{ fill: '#000000', fontWeight: 600, fontSize: 11 }} />
+                    <YAxis allowDecimals={false} stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
+                    <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
+                    <Bar dataKey="count" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          <div className="panel-card">
+            <div className="panel-header">
+              <span className="panel-title"><FileText className="w-5 h-5 text-blue-400" /> DTRS Document Expiration Report</span>
+            </div>
+            {documents.length === 0 ? (
+              <div className="empty-state">
+                <p>No DTRS documents to report yet.</p>
+                <p>Archive a warranty, contract, or invoice, or receive a vendor warranty through inspection.</p>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Document ID</th>
+                      <th>Title</th>
+                      <th>Type</th>
+                      <th>Supplier</th>
+                      <th>Linked Item</th>
+                      <th>Linked PO</th>
+                      <th>Expiration Date</th>
+                      <th>Days left</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {documents.map((doc) => (
+                      <tr key={doc.id}>
+                        <td className="font-mono text-xs text-blue-400 font-bold">{doc.id}</td>
+                        <td className="font-bold text-xs text-white">{doc.title}</td>
+                        <td><span className="badge badge-info">{doc.type}</span></td>
+                        <td className="text-xs text-slate-300">{doc.supplier || '—'}</td>
+                        <td className="font-mono text-xs text-blue-400">{doc.itemCode || '—'}</td>
+                        <td className="font-mono text-xs text-purple-400">{doc.purchaseOrderNumber || '—'}</td>
+                        <td className="text-xs font-bold text-amber-400">{doc.expirationDate || '—'}</td>
+                        <td className="text-xs font-bold">
+                          {doc.daysRemaining == null
+                            ? '—'
+                            : doc.daysRemaining < 0
+                              ? `${Math.abs(doc.daysRemaining)} days overdue`
+                              : `${doc.daysRemaining} days`}
+                        </td>
+                        <td>
+                          <span className={`badge badge-${String(doc.status || 'active').toLowerCase().replace(/ /g, '-')}`}>
+                            {doc.status || 'Active'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
