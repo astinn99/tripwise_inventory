@@ -129,9 +129,9 @@ export const AdjustInventoryModal = () => {
       payload.department = department.trim();
     }
 
+    setActiveModal(null);
     try {
       await adjustInventoryItem(item.id, payload);
-      setActiveModal(null);
     } catch {
       // Action error is shown by AppContext.
     }

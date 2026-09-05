@@ -30,12 +30,13 @@ const menuSections = [
 ];
 
 export const VendorSidebar = ({ activeTab, setActiveTab }) => {
-  const { opportunities, quotations, purchaseOrders, sidebarOpen, setSidebarOpen } = useApp();
+  const { opportunities, quotations, purchaseOrders, sidebarOpen, setSidebarOpen, vendorMessageUnread } = useApp();
 
   const badges = {
     opportunities: opportunities.length,
     my_quotes: quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-')).length,
     purchase_orders: purchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier').length,
+    messages: vendorMessageUnread,
   };
 
   return (
@@ -79,7 +80,6 @@ export const VendorSidebar = ({ activeTab, setActiveTab }) => {
 
       <div className="sidebar-footer">
         <div className="system-version">
-          <span>Vendor Portal v1.0</span>
           <span className="status-online">Online</span>
         </div>
       </div>

@@ -49,6 +49,13 @@ class InventoryItemController extends Controller
         return $this->ok($this->withRecordedMovements(new InventoryItemResource($item), $service), 'Item moved');
     }
 
+    public function destroy(InventoryItem $inventoryItem, SupplyChainService $service)
+    {
+        $service->removeInventoryItem($inventoryItem);
+
+        return $this->ok([], 'Inventory item removed');
+    }
+
     public function adjust(AdjustInventoryItemRequest $request, InventoryItem $inventoryItem, SupplyChainService $service)
     {
         $data = $request->validated();

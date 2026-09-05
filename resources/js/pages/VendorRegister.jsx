@@ -185,6 +185,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                             className="form-control"
                             value={form.companyName}
                             onChange={(event) => setField('companyName', event.target.value)}
+                            placeholder="e.g. Acme Fleet Parts Inc."
                             required
                         />
                     </div>
@@ -196,6 +197,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                             rows="2"
                             value={form.address}
                             onChange={(event) => setField('address', event.target.value)}
+                            placeholder="Unit / Street, Barangay, City, Province"
                             required
                         />
                     </div>
@@ -226,6 +228,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.contactPerson}
                                 onChange={(event) => setField('contactPerson', event.target.value)}
+                                placeholder="e.g. Ana Reyes"
                                 required
                             />
                         </div>
@@ -236,6 +239,8 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.phone}
                                 onChange={(event) => setField('phone', event.target.value)}
+                                placeholder="09XXXXXXXXX"
+                                inputMode="tel"
                                 required
                             />
                         </div>
@@ -248,6 +253,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                             className="form-control"
                             value={form.email}
                             onChange={(event) => setField('email', event.target.value)}
+                            placeholder="name@company.com"
                             autoComplete="username"
                             required
                         />
@@ -264,6 +270,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.taxId}
                                 onChange={(event) => setField('taxId', event.target.value)}
+                                placeholder="000-000-000-000"
                                 required
                             />
                         </div>
@@ -274,6 +281,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.secRegistration}
                                 onChange={(event) => setField('secRegistration', event.target.value)}
+                                placeholder="SEC000000 or DTI000000"
                                 required
                             />
                         </div>
@@ -314,6 +322,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                             className="form-control"
                             value={form.bankName}
                             onChange={(event) => setField('bankName', event.target.value)}
+                            placeholder="e.g. BDO Unibank"
                             required
                         />
                     </div>
@@ -325,6 +334,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.accountName}
                                 onChange={(event) => setField('accountName', event.target.value)}
+                                placeholder="Same as registered company name"
                                 required
                             />
                         </div>
@@ -335,6 +345,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.accountNumber}
                                 onChange={(event) => setField('accountNumber', event.target.value)}
+                                placeholder="0000-0000-00"
                                 required
                             />
                         </div>
@@ -352,6 +363,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.password}
                                 onChange={(event) => setField('password', event.target.value)}
+                                placeholder="At least 8 characters"
                                 autoComplete="new-password"
                                 minLength={8}
                                 required
@@ -365,6 +377,7 @@ export const VendorRegister = ({ onCancel, onRegistered, onAwaitingOtp }) => {
                                 className="form-control"
                                 value={form.password_confirmation}
                                 onChange={(event) => setField('password_confirmation', event.target.value)}
+                                placeholder="Re-enter password"
                                 autoComplete="new-password"
                                 minLength={8}
                                 required

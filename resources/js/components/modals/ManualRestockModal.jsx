@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { ShoppingCart } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { neededInDays as defaultNeededInDays, quoteWindowDays } from '../../services/priority';
+import { formatFriendlyDate } from '../../services/dates';
 
 const suggestedQty = (item) => {
   if (!item) {
@@ -27,6 +28,13 @@ const suggestedPriority = (item) => {
 };
 
 const suggestedReason = (item) => {
+  const forecast = item?.forecast;
+  if (forecast?.reorderQty > 0) {
+    const when = forecast.stockoutOn
+      ? formatFriendlyDate(forecast.stockoutOn, { relative: true })
+      : 'an unknown date';
+    return `Forecast restock: stock may run out ${when}. Suggested qty ${forecast.reorderQty}.`;
+  }
   if (item?.status === 'NORMAL') {
     return 'Proactive restock while stock is still above minimum.';
   }
@@ -56,7 +64,8 @@ export const ManualRestockModal = () => {
     }
 
     const nextPriority = suggestedPriority(modalData);
-    setQuantity(suggestedQty(modalData));
+    const forecastQty = Number(modalData.forecast?.reorderQty);
+    setQuantity(forecastQty > 0 ? forecastQty : suggestedQty(modalData));
     setPriority(nextPriority);
     setNeededInDays(defaultNeededInDays(nextPriority));
     setReason(suggestedReason(modalData));
@@ -133,10 +142,8 @@ export const ManualRestockModal = () => {
           value={priority}
           onChange={(event) => {
             const next = event.target.value;
-            setNeededInDays((current) => (
-              Number(current) === defaultNeededInDays(priority) ? defaultNeededInDays(next) : current
-            ));
             setPriority(next);
+            setNeededInDays(defaultNeededInDays(next));
           }}
         >
           <option value="NORMAL">NORMAL</option>

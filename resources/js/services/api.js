@@ -318,6 +318,39 @@ export async function openProtectedFile(path) {
     window.open(url, '_blank', 'noopener');
 }
 
+const forecastListCache = new Map();
+
+export function peekForecasts(horizon) {
+    const key = String(horizon || 30);
+    return forecastListCache.has(key) ? forecastListCache.get(key) : null;
+}
+
+export function getForecasts(options = {}) {
+    const { horizon, ...requestOptions } = options;
+    const key = String(horizon || 30);
+    const query = horizon ? `?horizon=${encodeURIComponent(horizon)}` : '';
+    return request(`/api/forecasts${query}`, requestOptions).then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        forecastListCache.set(key, list);
+        return list;
+    });
+}
+
+export function getForecast(itemCode, options = {}) {
+    const { horizon, ...requestOptions } = options;
+    const query = horizon ? `?horizon=${encodeURIComponent(horizon)}` : '';
+    return request(`/api/forecasts/${encodeURIComponent(itemCode)}${query}`, requestOptions);
+}
+
+export function refreshForecast(itemCode, horizon, options = {}) {
+    return request('/api/forecasts/refresh', {
+        ...options,
+        method: 'POST',
+        body: { itemCode, horizon },
+        timeout: 60000,
+    });
+}
+
 export const api = {
     get: (path, options = {}) => request(path, options),
     post: (path, body, options = {}) => request(path, { ...options, method: 'POST', body }),

@@ -19,7 +19,9 @@ import {
   FileText,
   AlertTriangle,
   BarChart3,
-  Bell
+  Bell,
+  MessageSquare,
+  TrendingUp
 } from 'lucide-react';
 
 export const Sidebar = () => {
@@ -34,12 +36,13 @@ export const Sidebar = () => {
     inventory,
     deliveries,
     documents,
-    notifications
+    notifications,
+    vendorMessageUnread
   } = useApp();
 
   // Badges calculation
   const pendingRequestsCount = supplyRequests.filter(r => r.status === 'Pending' || r.status === 'Received' || r.status === 'For Procurement').length;
-  const activePRCount = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed').length;
+  const activePRCount = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed' && p.status !== 'Cancelled').length;
   const pendingFinanceCount = purchaseOrders.filter(p => p.poStatus === 'Pending Finance Approval').length;
   const lowStockCount = inventory.filter(i => i.status === 'LOW STOCK' || i.status === 'OUT OF STOCK').length;
   const expectedDeliveriesCount = deliveries.filter(d => d.status === 'Expected' || d.status === 'In Transit' || d.status === 'Under Inspection').length;
@@ -61,7 +64,8 @@ export const Sidebar = () => {
         { id: 'procurement', label: 'Procurement', icon: ShoppingCart, badge: activePRCount, badgeColor: 'bg-blue', badgeHint: 'active requests' },
         { id: 'quotations', label: 'Quotations', icon: FileSpreadsheet },
         { id: 'purchase_orders', label: 'Purchase Orders', icon: FileCheck, badge: pendingFinanceCount, badgeColor: 'bg-purple', badgeHint: 'awaiting approval' },
-        { id: 'suppliers', label: 'Suppliers', icon: Users }
+        { id: 'suppliers', label: 'Suppliers', icon: Users },
+        { id: 'vendor_messages', label: 'Vendor Messages', icon: MessageSquare, badge: vendorMessageUnread, badgeColor: 'bg-blue', badgeHint: 'unread vendor messages' }
       ]
     },
     {
@@ -93,6 +97,7 @@ export const Sidebar = () => {
       title: 'ANALYTICS & ALERTS',
       items: [
         { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
+        { id: 'forecasts', label: 'AI Forecasting', icon: TrendingUp },
         { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadNotifCount, badgeColor: 'bg-rose', badgeHint: 'unread' }
       ]
     }
@@ -145,7 +150,6 @@ export const Sidebar = () => {
       {/* Footer Info */}
       <div className="sidebar-footer">
         <div className="system-version">
-          <span>TNVS Subsystem v2.4</span>
           <span className="status-online">Online</span>
         </div>
       </div>

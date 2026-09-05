@@ -10,16 +10,15 @@ import {
   Clock,
   Inbox,
   ImagePlus,
-  MessageSquare,
-  Phone,
   Mail,
   X,
   BookOpen,
   AlertTriangle,
 } from 'lucide-react';
 import { Modal, displayValue } from '../components/ui/Modal';
-import { api } from '../services/api';
+import { api, ApiError } from '../services/api';
 import { CredentialFiles } from '../components/ui/CredentialFiles';
+import { VendorThread } from '../components/ui/VendorThread';
 import { ItemIdentity, ItemThumb } from '../components/ui/ItemThumb';
 import { compressImageFile, formatFileSize } from '../services/images';
 import { formatDisplayDate } from '../services/dates';
@@ -40,8 +39,84 @@ const TAB_COPY = {
   opportunities: 'Browse open sourcing requests and submit a formal quotation before the deadline.',
   my_quotes: 'Track quotations you have submitted and edit them until a supplier is selected.',
   purchase_orders: 'Confirm awarded purchase orders and schedule shipment.',
-  messages: 'Message threads with the TripWise supply chain team will appear here.',
-  profile: 'Review the company, legal, contact, and banking details submitted for your vendor account.',
+  messages: 'Ask the TripWise supply chain team a question. You share one conversation with the whole team.',
+  profile: 'Update the company, legal, contact, and banking details for your vendor account.',
+};
+
+const SUPPLY_CATEGORIES = [
+  'Office Supplies',
+  'Communication Devices',
+  'Maintenance Tools',
+  'Fleet Consumables',
+  'Others',
+];
+
+const emptyProfileForm = {
+  companyName: '',
+  address: '',
+  categories: [],
+  contactPerson: '',
+  phone: '',
+  taxId: '',
+  secRegistration: '',
+  bankName: '',
+  accountName: '',
+  accountNumber: '',
+};
+
+const parseBankFields = (profile) => {
+  if (profile.bankName || profile.accountName || profile.accountNumber) {
+    return {
+      bankName: profile.bankName || '',
+      accountName: profile.accountName || '',
+      accountNumber: profile.accountNumber || '',
+    };
+  }
+
+  const raw = String(profile.bankDetails || '');
+  const accountName = (raw.match(/Acct name:\s*(.+?)(?:\s*·|$)/u) || [])[1]?.trim() || '';
+  const accountNumber = (raw.match(/Acct no:\s*(.+?)(?:\s*·|$)/u) || [])[1]?.trim() || '';
+  const bankName = raw.split(' · ')[0]?.trim() || '';
+
+  return {
+    bankName: bankName.startsWith('Acct ') ? '' : bankName,
+    accountName,
+    accountNumber,
+  };
+};
+
+const profileFormFromVendor = (profile) => ({
+  companyName: profile.companyName || '',
+  address: profile.address || '',
+  categories: Array.isArray(profile.categories) ? profile.categories : [],
+  contactPerson: profile.contactPerson || '',
+  phone: profile.phone || '',
+  taxId: profile.taxId || '',
+  secRegistration: profile.secRegistration || '',
+  ...parseBankFields(profile),
+});
+
+const profileFromSession = (user) => {
+  if (!user?.supplierId && !user?.supplierName) {
+    return null;
+  }
+
+  return {
+    id: user.supplierId || '',
+    companyName: user.supplierName || '',
+    contactPerson: user.name || '',
+    email: user.email || '',
+    status: user.supplierStatus || '',
+    address: '',
+    phone: '',
+    categories: [],
+    taxId: '',
+    secRegistration: '',
+    bankName: '',
+    accountName: '',
+    accountNumber: '',
+    credentials: [],
+  };
 };
 
 const quoteBadgeClass = (status) => {
@@ -86,15 +161,23 @@ const rfqReason = (requirements) => {
     .trim();
 };
 
-const OpportunityCard = ({ opp, compact = false, onQuote }) => {
+const OpportunityCard = ({ opp, compact = false, onQuote, onCancel }) => {
   const due = deadlineState(opp.deadline);
   const priority = normalizePriority(opp.priority);
   const reason = rfqReason(opp.requirements);
   const meta = [opp.category, opp.itemCode].filter(Boolean).join(' · ');
+  const badge = <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>;
   const cta = (
-    <button type="button" onClick={() => onQuote(opp)} className="btn btn-primary btn-sm vendor-rfq-cta">
-      <Send className="w-3.5 h-3.5" /> Submit quotation
-    </button>
+    <div className="vendor-rfq-cta-row">
+      {onCancel ? (
+        <button type="button" onClick={() => onCancel(opp)} className="btn btn-outline btn-sm">
+          <X className="w-3.5 h-3.5" /> Cancel RFQ
+        </button>
+      ) : null}
+      <button type="button" onClick={() => onQuote(opp)} className="btn btn-primary btn-sm vendor-rfq-cta">
+        <Send className="w-3.5 h-3.5" /> Submit quotation
+      </button>
+    </div>
   );
 
   return (
@@ -106,7 +189,7 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
       <div className="vendor-rfq-body">
         <div className="vendor-rfq-top">
           <span className="vendor-rfq-ref">{opp.prNumber}</span>
-          <span className={`badge ${priorityBadgeClass(priority)}`}>{priority}</span>
+          {!compact ? badge : null}
         </div>
         <h4 className="vendor-rfq-title">{opp.itemName || opp.title}</h4>
         {meta ? <p className="vendor-rfq-meta">{meta}</p> : null}
@@ -152,7 +235,12 @@ const OpportunityCard = ({ opp, compact = false, onQuote }) => {
           </p>
         )}
       </div>
-      {compact ? cta : null}
+      {compact ? (
+        <div className="vendor-rfq-actions">
+          {badge}
+          {cta}
+        </div>
+      ) : null}
     </article>
   );
 };
@@ -265,12 +353,18 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     submitSupplierQuotation,
     updateSupplierQuotation,
     supplierConfirmPO,
+    cancelProcurementRequest,
     actionError,
     actionLoading,
     user,
+    suppliers,
+    patchSessionUser,
+    vendorMessageRevision,
+    setVendorMessageUnread,
   } = useApp();
 
   const uploadAbortRef = useRef(null);
+  const [pendingCancel, setPendingCancel] = useState(null);
   const savedQuotes = sortByPriority(quotations.filter((quote) => !String(quote.id || '').startsWith('tmp-')));
   const rankedOpportunities = sortByPriority(opportunities);
   const rankedPurchaseOrders = sortByPriority(purchaseOrders, 'confirmBy');
@@ -298,7 +392,18 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
   const [warrantyHint, setWarrantyHint] = useState('');
   const [manualBusy, setManualBusy] = useState(false);
   const [manualHint, setManualHint] = useState('');
-  const [vendorProfile, setVendorProfile] = useState(null);
+  const bootProfile = suppliers.find((item) => item?.id === user?.supplierId) || suppliers[0] || null;
+  const [vendorProfile, setVendorProfile] = useState(() => bootProfile || profileFromSession(user));
+  const [profileForm, setProfileForm] = useState(() => (
+    bootProfile || profileFromSession(user)
+      ? profileFormFromVendor(bootProfile || profileFromSession(user))
+      : emptyProfileForm
+  ));
+  const [profileLoading, setProfileLoading] = useState(!bootProfile);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileSaved, setProfileSaved] = useState(false);
+  const profileDirtyRef = useRef(false);
 
   const awaitingConfirm = rankedPurchaseOrders.filter((po) => po.poStatus === 'Sent to Supplier');
   const urgentOpen = rankedOpportunities.filter((opp) => normalizePriority(opp.priority) === 'URGENT');
@@ -307,25 +412,117 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     : rankedOpportunities.filter((opp) => normalizePriority(opp.priority) === priorityFilter);
   const pendingApproval = (vendorProfile?.status || user?.supplierStatus) === 'Pending Approval';
 
-  useEffect(() => {
-    let cancelled = false;
+  const applyLoadedProfile = (profile) => {
+    setVendorProfile(profile);
+    if (!profileDirtyRef.current) {
+      setProfileForm(profileFormFromVendor(profile));
+    }
+    setProfileError('');
+    setProfileLoading(false);
+  };
 
+  const loadVendorProfile = () => {
+    setProfileError('');
+    setProfileSaved(false);
+    if (!vendorProfile) {
+      setProfileLoading(true);
+    }
+
+    return api.get('/api/vendor/profile', { portal: 'vendor' })
+      .then((profile) => {
+        profileDirtyRef.current = false;
+        applyLoadedProfile(profile);
+      })
+      .catch((caught) => {
+        if (!vendorProfile) {
+          setVendorProfile(profileFromSession(user));
+        }
+        setProfileError(caught instanceof ApiError ? caught.message : 'Unable to load your company profile.');
+        setProfileLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    if (bootProfile) {
+      applyLoadedProfile(bootProfile);
+      return;
+    }
+
+    let cancelled = false;
+    setProfileLoading((current) => current || !vendorProfile);
     api.get('/api/vendor/profile', { portal: 'vendor' })
       .then((profile) => {
         if (!cancelled) {
-          setVendorProfile(profile);
+          applyLoadedProfile(profile);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
-          setVendorProfile(null);
+      .catch((caught) => {
+        if (cancelled) {
+          return;
         }
+        setProfileError(caught instanceof ApiError ? caught.message : 'Unable to load your company profile.');
+        setProfileLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bootProfile?.id, bootProfile?.taxId, bootProfile?.bankDetails]);
+
+  const setProfileField = (key, value) => {
+    profileDirtyRef.current = true;
+    setProfileForm((current) => ({ ...current, [key]: value }));
+    setProfileSaved(false);
+  };
+
+  const toggleProfileCategory = (category) => {
+    profileDirtyRef.current = true;
+    setProfileForm((current) => {
+      const selected = current.categories.includes(category)
+        ? current.categories.filter((item) => item !== category)
+        : [...current.categories, category];
+      return { ...current, categories: selected };
+    });
+    setProfileSaved(false);
+  };
+
+  const resetProfileForm = () => {
+    if (!vendorProfile) {
+      return;
+    }
+    profileDirtyRef.current = false;
+    setProfileForm(profileFormFromVendor(vendorProfile));
+    setProfileError('');
+    setProfileSaved(false);
+  };
+
+  const saveVendorProfile = async (event) => {
+    event.preventDefault();
+    setProfileError('');
+    setProfileSaved(false);
+
+    if (profileForm.categories.length === 0) {
+      setProfileError('Select at least one supply category you can serve.');
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const profile = await api.put('/api/vendor/profile', profileForm, { portal: 'vendor' });
+      profileDirtyRef.current = false;
+      setVendorProfile(profile);
+      setProfileForm(profileFormFromVendor(profile));
+      patchSessionUser({
+        name: profile.contactPerson,
+        supplierName: profile.companyName,
+      });
+      setProfileSaved(true);
+    } catch (caught) {
+      setProfileError(caught instanceof ApiError ? caught.message : 'Unable to save your company profile.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   const resetPhotos = (urls = []) => {
     setSavedPhotos(urls);
@@ -526,7 +723,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
     <div className="vendor-portal-page">
       <div className="page-header">
         <div className="page-header-title-group">
-          <h2 className="page-title">{user?.supplierName || 'Vendor'}</h2>
+          <h2 className="page-title">{vendorProfile?.companyName || user?.supplierName || 'Vendor'}</h2>
           <p className="page-description">{TAB_COPY[activeTab] || TAB_COPY.dashboard}</p>
         </div>
       </div>
@@ -536,7 +733,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           <Clock className="w-5 h-5" />
           <div>
             <strong>Pending supply chain review</strong>
-            <p>Your credentials are under review. RFQs will appear here after approval.</p>
+            <p>Your credentials are under review. You can still update your profile. RFQs will appear here after approval.</p>
           </div>
         </div>
       ) : null}
@@ -618,7 +815,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
             ) : (
               <div className="vendor-rfq-feed">
                 {rankedOpportunities.slice(0, 4).map((opp) => (
-                  <OpportunityCard key={opp.id} opp={opp} compact onQuote={openQuote} />
+                  <OpportunityCard key={opp.id} opp={opp} compact onQuote={openQuote} onCancel={setPendingCancel} />
                 ))}
               </div>
             )}
@@ -650,7 +847,7 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
           ) : (
             <div className="vendor-rfq-grid">
               {visibleOpportunities.map((opp) => (
-                <OpportunityCard key={opp.id} opp={opp} onQuote={openQuote} />
+                <OpportunityCard key={opp.id} opp={opp} onQuote={openQuote} onCancel={setPendingCancel} />
               ))}
             </div>
           )}
@@ -720,11 +917,18 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                         <span className={`badge badge-${quoteBadgeClass(q.status)}`}>{q.status}</span>
                       </td>
                       <td data-label="Action" className="text-right table-stack-actions">
-                        {q.canEdit && (
-                          <button type="button" onClick={() => openEditQuote(q)} className="btn btn-outline btn-sm">
-                            <Pencil className="w-3.5 h-3.5" /> Edit
-                          </button>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          {q.canEdit && (
+                            <button type="button" onClick={() => openEditQuote(q)} className="btn btn-outline btn-sm">
+                              <Pencil className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          )}
+                          {q.status !== 'Selected' && q.procurementId && (
+                            <button type="button" onClick={() => setPendingCancel({ prNumber: q.procurementId, itemName: q.item })} className="btn btn-outline btn-sm">
+                              <X className="w-3.5 h-3.5" /> Cancel PR
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -986,18 +1190,17 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
       {activeTab === 'profile' && (
         <div className="panel-card">
           {vendorProfile ? (
-            <div className="vendor-profile">
+            <form className="vendor-profile" onSubmit={saveVendorProfile}>
               <div className="modal-hero">
                 <div className="flex items-start gap-3">
                   <span className="modal-avatar">
-                    {(vendorProfile.companyName || 'V').slice(0, 2).toUpperCase()}
+                    {(profileForm.companyName || vendorProfile.companyName || 'V').slice(0, 2).toUpperCase()}
                   </span>
                   <div className="modal-hero-main">
                     <div className="modal-kicker">{vendorProfile.id}</div>
-                    <h4>{vendorProfile.companyName}</h4>
-                    <div className="modal-hero-meta">{displayValue(vendorProfile.address)}</div>
+                    <h4>{profileForm.companyName || vendorProfile.companyName}</h4>
+                    <div className="modal-hero-meta">{displayValue(profileForm.address || vendorProfile.address)}</div>
                     <div className="modal-chip-row">
-                      <span className="modal-chip"><Phone className="w-3.5 h-3.5" /> {displayValue(vendorProfile.phone)}</span>
                       <span className="modal-chip"><Mail className="w-3.5 h-3.5" /> {displayValue(vendorProfile.email)}</span>
                     </div>
                   </div>
@@ -1010,44 +1213,266 @@ export const VendorPortal = ({ activeTab, setActiveTab }) => {
                 </div>
               </div>
 
-              <div className="grid-2">
-                <div className="modal-panel">
-                  <div className="modal-section-title">Legal registrations</div>
-                  <div className="modal-dl">
-                    <div className="modal-dl-row"><span>TIN</span><strong>{displayValue(vendorProfile.taxId)}</strong></div>
-                    <div className="modal-dl-row"><span>SEC / DTI #</span><strong>{displayValue(vendorProfile.secRegistration)}</strong></div>
-                    <div className="modal-dl-row"><span>Categories</span><strong>{(vendorProfile.categories || []).join(', ') || '—'}</strong></div>
+              {profileLoading ? (
+                <div className="vendor-alert-banner is-pending" role="status">
+                  <Clock className="w-5 h-5" />
+                  <div>
+                    <strong>Refreshing details</strong>
+                    <p>You can already edit the fields below.</p>
                   </div>
                 </div>
+              ) : null}
+
+              {profileError ? (
+                <div className="vendor-alert-banner is-urgent" role="alert">
+                  <AlertTriangle className="w-5 h-5" />
+                  <div>
+                    <strong>Could not update profile</strong>
+                    <p>{profileError}</p>
+                  </div>
+                </div>
+              ) : null}
+
+              {profileSaved ? (
+                <div className="vendor-alert-banner" role="status">
+                  <CheckCircle2 className="w-5 h-5" />
+                  <div>
+                    <strong>Profile updated</strong>
+                    <p>Supply chain will see these details on your vendor record.</p>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid-2">
                 <div className="modal-panel">
-                  <div className="modal-section-title">Contacts & bank</div>
-                  <div className="modal-dl">
-                    <div className="modal-dl-row"><span>Contact person</span><strong>{displayValue(vendorProfile.contactPerson)}</strong></div>
-                    <div className="modal-dl-row"><span>Bank details</span><strong>{displayValue(vendorProfile.bankDetails)}</strong></div>
+                  <div className="modal-section-title">Company</div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileCompanyName">Company name</label>
+                    <input
+                      id="profileCompanyName"
+                      className="form-control"
+                      value={profileForm.companyName}
+                      onChange={(event) => setProfileField('companyName', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileAddress">Business address</label>
+                    <textarea
+                      id="profileAddress"
+                      className="form-control"
+                      rows="2"
+                      value={profileForm.address}
+                      onChange={(event) => setProfileField('address', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <span className="form-label" id="profileCategoriesLabel">Categories you can supply</span>
+                    <div className="login-check-row" role="group" aria-labelledby="profileCategoriesLabel">
+                      {SUPPLY_CATEGORIES.map((category) => (
+                        <label key={category} className="login-check">
+                          <input
+                            type="checkbox"
+                            checked={profileForm.categories.includes(category)}
+                            onChange={() => toggleProfileCategory(category)}
+                            disabled={profileSaving}
+                          />
+                          {category}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="modal-panel">
+                  <div className="modal-section-title">Contacts</div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileContactPerson">Contact person</label>
+                    <input
+                      id="profileContactPerson"
+                      className="form-control"
+                      value={profileForm.contactPerson}
+                      onChange={(event) => setProfileField('contactPerson', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profilePhone">Phone</label>
+                    <input
+                      id="profilePhone"
+                      className="form-control"
+                      value={profileForm.phone}
+                      onChange={(event) => setProfileField('phone', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileEmail">Email (used to sign in)</label>
+                    <input
+                      id="profileEmail"
+                      className="form-control"
+                      value={vendorProfile.email || ''}
+                      disabled
+                      readOnly
+                    />
                   </div>
                 </div>
               </div>
 
-              <CredentialFiles credentials={vendorProfile.credentials || []} />
-            </div>
+              <div className="grid-2">
+                <div className="modal-panel">
+                  <div className="modal-section-title">Legal registrations</div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileTaxId">TIN</label>
+                    <input
+                      id="profileTaxId"
+                      className="form-control"
+                      value={profileForm.taxId}
+                      onChange={(event) => setProfileField('taxId', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileSecRegistration">SEC / DTI number</label>
+                    <input
+                      id="profileSecRegistration"
+                      className="form-control"
+                      value={profileForm.secRegistration}
+                      onChange={(event) => setProfileField('secRegistration', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="modal-panel">
+                  <div className="modal-section-title">Bank details</div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileBankName">Bank name</label>
+                    <input
+                      id="profileBankName"
+                      className="form-control"
+                      value={profileForm.bankName}
+                      onChange={(event) => setProfileField('bankName', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileAccountName">Account name</label>
+                    <input
+                      id="profileAccountName"
+                      className="form-control"
+                      value={profileForm.accountName}
+                      onChange={(event) => setProfileField('accountName', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="profileAccountNumber">Account number</label>
+                    <input
+                      id="profileAccountNumber"
+                      className="form-control"
+                      value={profileForm.accountNumber}
+                      onChange={(event) => setProfileField('accountNumber', event.target.value)}
+                      disabled={profileSaving}
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 mb-4">
+                <button type="button" className="btn btn-outline btn-sm" onClick={resetProfileForm} disabled={profileSaving}>
+                  Reset
+                </button>
+                <button type="submit" className="btn btn-primary btn-sm" disabled={profileSaving}>
+                  <Pencil className="w-3.5 h-3.5" />
+                  {profileSaving ? 'Saving...' : 'Save profile'}
+                </button>
+              </div>
+
+              <CredentialFiles
+                credentials={vendorProfile.credentials || []}
+                onReplace={async (doc, file) => {
+                  const payload = new FormData();
+                  payload.append('file', file);
+                  const profile = await api.post(`/api/vendor/profile/credentials/${doc.id}`, payload, {
+                    portal: 'vendor',
+                    timeout: 90000,
+                  });
+                  setVendorProfile(profile);
+                }}
+              />
+            </form>
           ) : (
             <div className="vendor-placeholder">
               <Building className="w-10 h-10" />
               <h3>Company Profile</h3>
-              <p>{TAB_COPY.profile}</p>
+              <p>{profileError || TAB_COPY.profile}</p>
+              {profileError ? (
+                <button type="button" className="btn btn-outline btn-sm mt-3" onClick={loadVendorProfile}>
+                  Try again
+                </button>
+              ) : null}
             </div>
           )}
         </div>
       )}
 
-      {activeTab === 'messages' && (
-        <div className="panel-card">
-          <div className="vendor-placeholder">
-            <MessageSquare className="w-10 h-10" />
-            <h3>Messages</h3>
-            <p>{TAB_COPY.messages}</p>
-          </div>
-        </div>
+      <div hidden={activeTab !== 'messages'}>
+        <VendorThread
+          title="TripWise Supply Chain"
+          isVendor
+          revision={vendorMessageRevision}
+          emptyTitle="No messages yet"
+          emptyDescription="Ask the supply chain team a question."
+          onUnreadChange={setVendorMessageUnread}
+        />
+      </div>
+
+      {pendingCancel && (
+        <Modal
+          onClose={() => setPendingCancel(null)}
+          icon={X}
+          tone="rose"
+          size="sm"
+          title="Cancel this RFQ"
+          subtitle={`${pendingCancel.prNumber} will close for every vendor.`}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPendingCancel(null)}>
+                Keep RFQ
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={actionLoading}
+                onClick={async () => {
+                  try {
+                    await cancelProcurementRequest(pendingCancel.prNumber);
+                    setPendingCancel(null);
+                  } catch {
+                    // actionError banner
+                  }
+                }}
+              >
+                Cancel RFQ
+              </button>
+            </>
+          )}
+        >
+          <p className="text-sm">
+            This removes {pendingCancel.itemName || pendingCancel.title || 'this request'} from Open Sourcing Opportunities.
+          </p>
+        </Modal>
       )}
     </div>
   );

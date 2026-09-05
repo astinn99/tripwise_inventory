@@ -55,4 +55,17 @@ class ProcurementRequest extends Model
     {
         return $this->hasMany(SupplierOpportunity::class);
     }
+
+    public function isCancellable(): bool
+    {
+        if ($this->status === 'Cancelled') {
+            return false;
+        }
+
+        $po = $this->relationLoaded('purchaseOrder')
+            ? $this->purchaseOrder
+            : $this->purchaseOrder()->first();
+
+        return $po?->po_status !== 'Fully Delivered';
+    }
 }

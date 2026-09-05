@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { FileCheck, DollarSign } from 'lucide-react';
+import { FileCheck, DollarSign, X } from 'lucide-react';
+import { Modal } from '../components/ui/Modal';
 import { normalizePriority, priorityBadgeClass, sortByPriority } from '../services/priority';
 
 export const PurchaseOrders = () => {
@@ -8,8 +9,11 @@ export const PurchaseOrders = () => {
     purchaseOrders,
     setActiveModal,
     setModalData,
-    searchQuery
+    searchQuery,
+    cancelProcurementRequest,
+    actionLoading,
   } = useApp();
+  const [pendingCancel, setPendingCancel] = useState(null);
 
   const query = searchQuery.toLowerCase();
   const filteredPOs = sortByPriority(purchaseOrders.filter((po) => {
@@ -86,18 +90,30 @@ export const PurchaseOrders = () => {
                     </span>
                   </td>
                   <td className="text-right">
-                    {(po.financeApprovalStatus === 'Pending Finance Approval' || po.poStatus === 'Pending Finance Approval') && (
-                      <button
-                        onClick={() => {
-                          setModalData(po);
-                          setActiveModal('finance_approval');
-                        }}
-                        className="btn btn-warning btn-sm"
-                        title="Open Finance Approval Checkpoint"
-                      >
-                        <DollarSign className="w-3.5 h-3.5" /> Finance Checkpoint
-                      </button>
-                    )}
+                    <div className="flex justify-end gap-1">
+                      {(po.financeApprovalStatus === 'Pending Finance Approval' || po.poStatus === 'Pending Finance Approval') && (
+                        <button
+                          onClick={() => {
+                            setModalData(po);
+                            setActiveModal('finance_approval');
+                          }}
+                          className="btn btn-warning btn-sm"
+                          title="Open Finance Approval Checkpoint"
+                        >
+                          <DollarSign className="w-3.5 h-3.5" /> Finance Checkpoint
+                        </button>
+                      )}
+                      {po.procurementId && po.poStatus !== 'Fully Delivered' && po.poStatus !== 'Cancelled' && (
+                        <button
+                          type="button"
+                          onClick={() => setPendingCancel(po)}
+                          className="btn btn-outline btn-sm"
+                          title="Cancel this purchase order and its PR"
+                        >
+                          <X className="w-3.5 h-3.5" /> Cancel
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -105,6 +121,41 @@ export const PurchaseOrders = () => {
           </table>
         </div>
       </div>
+
+      {pendingCancel && (
+        <Modal
+          onClose={() => setPendingCancel(null)}
+          icon={X}
+          tone="rose"
+          size="sm"
+          title="Cancel purchase order"
+          subtitle={`${pendingCancel.poNumber} and ${pendingCancel.procurementId} will close.`}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPendingCancel(null)}>
+                Keep order
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={actionLoading}
+                onClick={async () => {
+                  try {
+                    await cancelProcurementRequest(pendingCancel.procurementId);
+                    setPendingCancel(null);
+                  } catch {
+                    // actionError banner
+                  }
+                }}
+              >
+                Cancel order
+              </button>
+            </>
+          )}
+        >
+          <p className="text-sm">This cancels the procurement request and hides the RFQ from vendor portals.</p>
+        </Modal>
+      )}
     </div>
   );
 };

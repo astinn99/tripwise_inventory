@@ -13,12 +13,14 @@ use App\Http\Resources\InventoryItemResource;
 use App\Http\Resources\InventoryMovementResource;
 use App\Http\Resources\PurchaseOrderResource;
 use App\Http\Resources\QuotationResource;
+use App\Http\Resources\ReleaseResource;
 use App\Models\Delivery;
 use App\Models\Document;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\ProcurementRequest;
 use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderItem;
 use App\Models\Quotation;
 use App\Models\Release;
 use App\Models\StockCount;
@@ -27,11 +29,14 @@ use App\Models\Supplier;
 use App\Models\SupplierOpportunity;
 use App\Models\SupplyRequest;
 use App\Models\User;
+use App\Models\VendorMessage;
 use App\Support\Base64Upload;
 use App\Support\DocumentCode;
 use App\Support\Priority;
 use App\Support\SafeBroadcast;
+use App\Support\StockStatus;
 use App\Support\WarrantyDuration;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +50,9 @@ class SupplyChainService
     /** @var list<InventoryMovement> */
     private array $recordedMovements = [];
 
+    /** @var list<Release> */
+    private array $recordedReleases = [];
+
     public function __construct(private NotificationService $notifications) {}
 
     public function recordedMovementPayload(): array
@@ -54,6 +62,13 @@ class SupplyChainService
         }
 
         return InventoryMovementResource::collection($this->recordedMovements)->resolve();
+    }
+
+    public function recordedReleasePayload(): ?array
+    {
+        $release = $this->recordedReleases[0] ?? null;
+
+        return $release ? (new ReleaseResource($release))->resolve() : null;
     }
 
     public function receiveDepartmentSupplyRequest(array $data): SupplyRequest
@@ -223,6 +238,11 @@ class SupplyChainService
                 'warning'
             );
 
+            $this->postVendorSystemMessage(
+                $quote->supplier_id,
+                "TripWise selected your company for {$pr->item_name} ({$pr->pr_number}). Purchase order {$poNumber} was created and is awaiting finance approval."
+            );
+
             $fresh = $po->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']);
             $this->broadcastPO($fresh);
 
@@ -284,6 +304,17 @@ class SupplyChainService
         }
 
         $poNumber = $po->po_number;
+        $financeBody = match ($status) {
+            'Finance Approved' => "Purchase order {$poNumber} was approved by finance and sent to you for confirmation.",
+            'Finance Rejected' => "Purchase order {$poNumber} was rejected by finance.",
+            default => "Purchase order {$poNumber} was returned for revision.",
+        };
+        $this->postVendorSystemMessage(
+            $po->supplier_id,
+            $financeBody,
+            notifyVendor: $status !== 'Finance Approved'
+        );
+
         $vendorUserIds = $status === 'Finance Approved' && $po->supplier_id
             ? User::query()->where('supplier_id', $po->supplier_id)->pluck('id')->all()
             : [];
@@ -327,6 +358,11 @@ class SupplyChainService
         $delivery = $this->createInboundDeliveryFromPO($po);
 
         $poNumber = $po->po_number;
+        $this->postVendorSystemMessage(
+            $po->supplier_id,
+            "Purchase order {$poNumber} was confirmed. The shipment is in transit for receiving and inspection.",
+            notifyVendor: false
+        );
         dispatch(function () use ($po, $poNumber, $delivery): void {
             $this->notifications->create(
                 'Supplier Confirmed PO',
@@ -482,6 +518,16 @@ class SupplyChainService
                     'status' => $isFull ? 'completed' : 'in_progress',
                 ]);
                 $po->update(['po_status' => $poStatus]);
+                $deliveryNumber = $delivery->delivery_number;
+                $poNumber = $po->po_number;
+                if ($inspectionResult === 'Failed') {
+                    $deliveryBody = "Delivery {$deliveryNumber} for purchase order {$poNumber} failed inspection and was rejected.";
+                } elseif ($inspectionResult === 'Passed' && $isFull) {
+                    $deliveryBody = "Supply for purchase order {$poNumber} has been delivered and accepted ({$deliveryNumber}). Inventory has been updated.";
+                } else {
+                    $deliveryBody = "Delivery {$deliveryNumber} for purchase order {$poNumber} was partially accepted. Remaining quantity is still outstanding.";
+                }
+                $this->postVendorSystemMessage($po->supplier_id, $deliveryBody);
                 $this->broadcastPO($po->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']));
             }
 
@@ -526,8 +572,10 @@ class SupplyChainService
 
             $item = InventoryItem::query()->where('item_code', $locked->item_code)->lockForUpdate()->first();
             if ($item) {
+                $previousStatus = StockStatus::fromQuantity((int) $item->quantity, (int) $item->min_stock_level);
                 $item->quantity = max(0, $item->quantity - $locked->quantity_requested);
                 $item->save();
+                $this->createLowStockProcurementIfNeeded($item, $previousStatus);
                 $this->broadcastStock($item);
             }
 
@@ -581,6 +629,7 @@ class SupplyChainService
     {
         return DB::transaction(function () use ($item, $data, $actor) {
             $locked = InventoryItem::query()->whereKey($item->id)->lockForUpdate()->firstOrFail();
+            $previousStatus = StockStatus::fromQuantity((int) $locked->quantity, (int) $locked->min_stock_level);
             $type = (string) $data['type'];
             $quantity = (int) $data['quantity'];
             $reason = trim((string) $data['reason']);
@@ -642,7 +691,7 @@ class SupplyChainService
                 }
                 $releaseNumber = DocumentCode::next('releases', 'release_number', 'REL');
 
-                Release::query()->create([
+                $this->recordedReleases[] = Release::query()->create([
                     'release_number' => $releaseNumber,
                     'supply_request_id' => null,
                     'request_id' => 'MANUAL',
@@ -668,6 +717,7 @@ class SupplyChainService
             }
 
             $locked->save();
+            $this->createLowStockProcurementIfNeeded($locked, $previousStatus);
 
             $this->recordMovement([
                 'inventory_item_id' => $locked->id,
@@ -703,6 +753,20 @@ class SupplyChainService
         return (int) $item->damaged_quantity > 0 ? 'damaged' : 'available';
     }
 
+    public function removeInventoryItem(InventoryItem $item): void
+    {
+        $code = $item->item_code;
+        $name = $item->description;
+        $item->delete();
+
+        $this->notifications->create(
+            'Inventory item removed',
+            "{$code} ({$name}) was removed from the catalog.",
+            'stock',
+            'warning'
+        );
+    }
+
     public function saveInventoryItem(array $data, ?InventoryItem $existing = null): InventoryItem
     {
         $image = $data['image'] ?? null;
@@ -729,8 +793,10 @@ class SupplyChainService
         ];
 
         if ($existing) {
+            $previousStatus = StockStatus::fromQuantity((int) $existing->quantity, (int) $existing->min_stock_level);
             $existing->update($payload);
             $item = $existing->fresh(['supplier', 'storageLocation']);
+            $this->createLowStockProcurementIfNeeded($item, $previousStatus);
             $this->notifications->create('Inventory Updated', "Item {$item->item_code} - {$item->description} details updated.", 'stock', 'info');
         } else {
             $payload['code'] = DocumentCode::next('inventory_items', 'code', 'INV', 3, false);
@@ -933,8 +999,10 @@ class SupplyChainService
                 $discrepancyCount++;
                 $item = InventoryItem::query()->where('item_code', $line['itemCode'])->first();
                 if ($item) {
+                    $previousStatus = StockStatus::fromQuantity((int) $item->quantity, (int) $item->min_stock_level);
                     $item->quantity = (int) $line['actualQty'];
                     $item->save();
+                    $this->createLowStockProcurementIfNeeded($item, $previousStatus);
                     $this->broadcastStock($item);
                 }
 
@@ -1190,12 +1258,58 @@ class SupplyChainService
         return $quote;
     }
 
-    public function createManualProcurementRequest(InventoryItem $item, int $quantity, string $reason, string $priority, ?int $neededInDays = null): ProcurementRequest
+    private function createLowStockProcurementIfNeeded(InventoryItem $item, string $previousStatus): void
+    {
+        $status = (string) $item->status;
+        if (! in_array($status, ['LOW STOCK', 'OUT OF STOCK'], true)) {
+            return;
+        }
+
+        if (in_array($previousStatus, ['LOW STOCK', 'OUT OF STOCK'], true)) {
+            return;
+        }
+
+        if ($this->hasOpenProcurement($item->item_code) || $this->hasUndeliveredPurchaseOrder($item->item_code)) {
+            return;
+        }
+
+        $qty = max(1, (int) $item->min_stock_level - (int) $item->quantity);
+        $priority = $status === 'OUT OF STOCK' ? Priority::URGENT : Priority::HIGH;
+        $reason = "Stock hit {$status}. Current {$item->quantity}, minimum {$item->min_stock_level}. Restock qty {$qty}.";
+
+        $pr = $this->createManualProcurementRequest($item, $qty, $reason, $priority, null, 'LOW_STOCK');
+
+        $this->notifications->create(
+            'Low stock restock created',
+            "Procurement {$pr->pr_number} created for {$item->item_code} (qty {$qty}).",
+            'procurement',
+            $priority === Priority::URGENT ? 'danger' : 'warning'
+        );
+    }
+
+    private function hasOpenProcurement(string $itemCode): bool
+    {
+        return ProcurementRequest::query()
+            ->where('item_code', $itemCode)
+            ->whereIn('status', ['For Procurement', 'Quotation'])
+            ->where(fn ($query) => $query->whereNull('po_number')->orWhere('po_number', ''))
+            ->exists();
+    }
+
+    private function hasUndeliveredPurchaseOrder(string $itemCode): bool
+    {
+        return PurchaseOrderItem::query()
+            ->where('item_code', $itemCode)
+            ->whereColumn('delivered_qty', '<', 'quantity')
+            ->exists();
+    }
+
+    public function createManualProcurementRequest(InventoryItem $item, int $quantity, string $reason, string $priority, ?int $neededInDays = null, string $source = 'MANUAL'): ProcurementRequest
     {
         $normalized = Priority::normalize($priority);
         $pr = ProcurementRequest::query()->create([
             'pr_number' => DocumentCode::next('procurement_requests', 'pr_number', 'PR'),
-            'source_request' => 'MANUAL',
+            'source_request' => $source,
             'department' => 'Inventory Management',
             'item_code' => $item->item_code,
             'item_name' => $item->description,
@@ -1269,6 +1383,64 @@ class SupplyChainService
             }
 
             return $invited;
+        });
+    }
+
+    public function cancelProcurementRequest(ProcurementRequest $pr, User $actor): ProcurementRequest
+    {
+        $pr->loadMissing(['purchaseOrder', 'opportunities']);
+
+        if ($actor->isSupplier()) {
+            $invited = $pr->opportunities->contains(
+                fn (SupplierOpportunity $opportunity) => (int) $opportunity->supplier_id === (int) $actor->supplier_id
+            );
+            if (! $invited) {
+                throw new AuthorizationException('This procurement request was not sent to your vendor portal.');
+            }
+        } elseif (! $actor->isInternal()) {
+            throw new AuthorizationException('This action is restricted to internal staff.');
+        }
+
+        if (! $pr->isCancellable()) {
+            throw ValidationException::withMessages([
+                'procurementRequest' => $pr->status === 'Cancelled'
+                    ? 'This procurement request is already cancelled.'
+                    : 'A fully delivered purchase order cannot be cancelled.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($pr, $actor) {
+            $pr->update(['status' => 'Cancelled']);
+
+            SupplierOpportunity::query()
+                ->where('procurement_request_id', $pr->id)
+                ->update(['status' => 'Cancelled']);
+
+            if ($pr->purchaseOrder && $pr->purchaseOrder->po_status !== 'Fully Delivered') {
+                $pr->purchaseOrder->update(['po_status' => 'Cancelled']);
+                $this->broadcastPO($pr->purchaseOrder->fresh(['items', 'timeline', 'procurementRequest', 'supplierAccount']));
+            }
+
+            $this->notifications->create(
+                'Procurement request cancelled',
+                "Procurement {$pr->pr_number} ({$pr->item_name}) was cancelled by {$actor->name}.",
+                'procurement',
+                'warning'
+            );
+
+            foreach ($pr->opportunities->pluck('supplier_id')->filter()->unique() as $supplierId) {
+                $this->postVendorSystemMessage(
+                    (int) $supplierId,
+                    "Procurement request {$pr->pr_number} for {$pr->item_name} was cancelled."
+                );
+            }
+
+            $this->broadcastSafely(new OpportunityPublished([
+                'prNumber' => $pr->pr_number,
+                'cancelled' => true,
+            ]));
+
+            return $pr->fresh(['catalogItem', 'purchaseOrder'])->loadCount(['opportunities', 'quotations']);
         });
     }
 
@@ -1384,7 +1556,7 @@ class SupplyChainService
             $neededBy = $now->copy()->addDays($neededInDays)->toDateString();
             $requirements = trim(implode(' ', array_filter([
                 "Please submit a quotation for {$pr->quantity} units of {$pr->item_name} ({$pr->item_code}).",
-                "Quote by ".Priority::displayDate($deadline).". Need item in {$neededInDays} day(s) (".Priority::displayDate($neededBy).").",
+                'Quote by '.Priority::displayDate($deadline).". Need item in {$neededInDays} day(s) (".Priority::displayDate($neededBy).').',
                 $pr->reason,
             ])));
             $budgetRange = $pr->estimated_cost
@@ -1425,7 +1597,7 @@ class SupplyChainService
                     'title' => $priority === Priority::NORMAL
                         ? 'New RFQ Available'
                         : "{$priority} RFQ: quote {$quantity} {$title} by {$deadlineLabel}",
-                    'message' => "{$pr->pr_number}: quote {$quantity} units of {$title} ({$pr->item_code}) by {$deadlineLabel}. Item needed by ".Priority::displayDate($neededBy).".",
+                    'message' => "{$pr->pr_number}: quote {$quantity} units of {$title} ({$pr->item_code}) by {$deadlineLabel}. Item needed by ".Priority::displayDate($neededBy).'.',
                     'type' => 'procurement',
                     'severity' => Priority::notificationSeverity($priority),
                     'user_id' => $vendorUser->id,
@@ -1466,6 +1638,37 @@ class SupplyChainService
         }
 
         return $existing?->storage_location_id;
+    }
+
+    private function postVendorSystemMessage(?int $supplierId, string $body, bool $notifyVendor = true): void
+    {
+        if (! $supplierId) {
+            return;
+        }
+
+        VendorMessage::query()->create([
+            'supplier_id' => $supplierId,
+            'user_id' => null,
+            'body' => $body,
+            'is_read' => false,
+        ]);
+
+        if (! $notifyVendor) {
+            return;
+        }
+
+        $vendorUserIds = User::query()->where('supplier_id', $supplierId)->pluck('id')->all();
+        if ($vendorUserIds === []) {
+            return;
+        }
+
+        $this->notifications->createMany(array_map(fn (int $userId) => [
+            'title' => 'New message from TripWise',
+            'message' => $body,
+            'type' => 'info',
+            'severity' => 'info',
+            'user_id' => $userId,
+        ], $vendorUserIds));
     }
 
     private function createDefaultTimeline(PurchaseOrder $po, string $timestamp): void
@@ -1555,7 +1758,32 @@ class SupplyChainService
             return;
         }
 
-        $this->broadcastSafely(new InventoryMovementCreated($this->recordedMovementPayload()));
+        $payload = $this->recordedMovementPayload();
+        $itemCodes = collect($this->recordedMovements)
+            ->filter(fn (InventoryMovement $movement) => $movement->movement_type !== 'Transfer')
+            ->pluck('item_code')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        dispatch(function () use ($itemCodes, $payload): void {
+            if ($itemCodes !== []) {
+                $forecasts = app(ForecastService::class);
+
+                foreach ($itemCodes as $itemCode) {
+                    try {
+                        $forecasts->refreshAfterMovement((string) $itemCode);
+                    } catch (\Throwable) {
+                    }
+                }
+            }
+
+            try {
+                broadcast(new InventoryMovementCreated($payload))->toOthers();
+            } catch (\Throwable) {
+            }
+        })->afterResponse();
     }
 
     private function broadcastSafely(object $event): void

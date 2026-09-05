@@ -15,6 +15,7 @@ const pageMeta = {
   quotations: { title: 'Quotations', hint: 'Supply Chain' },
   purchase_orders: { title: 'Purchase Orders', hint: 'Supply Chain' },
   suppliers: { title: 'Suppliers', hint: 'Supply Chain' },
+  vendor_messages: { title: 'Vendor Messages', hint: 'Supply Chain' },
   items: { title: 'Items', hint: 'Inventory' },
   stock_monitoring: { title: 'Stock Monitoring', hint: 'Inventory' },
   inventory_movements: { title: 'Inventory Movements', hint: 'Inventory' },
@@ -26,6 +27,7 @@ const pageMeta = {
   documents: { title: 'Documents', hint: 'DTRS' },
   expiring_documents: { title: 'Expiring Documents', hint: 'DTRS' },
   reports: { title: 'Reports', hint: 'Analytics' },
+  forecasts: { title: 'AI Forecasting', hint: 'Analytics' },
   notifications: { title: 'Notifications', hint: 'Alerts' },
 };
 

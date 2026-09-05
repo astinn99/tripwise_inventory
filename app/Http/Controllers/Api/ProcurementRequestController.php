@@ -9,6 +9,7 @@ use App\Http\Resources\ProcurementRequestResource;
 use App\Models\InventoryItem;
 use App\Models\ProcurementRequest;
 use App\Services\SupplyChainService;
+use Illuminate\Http\Request;
 
 class ProcurementRequestController extends Controller
 {
@@ -18,7 +19,7 @@ class ProcurementRequestController extends Controller
 
         return $this->ok(ProcurementRequestResource::collection(
             ProcurementRequest::query()
-                ->with('catalogItem')
+                ->with(['catalogItem', 'purchaseOrder:id,procurement_request_id,po_status'])
                 ->withCount(['opportunities', 'quotations'])
                 ->withMin('opportunities', 'deadline')
                 ->orderByDesc('id')
@@ -45,6 +46,13 @@ class ProcurementRequestController extends Controller
         $pr = $service->updateProcurementRequest($procurementRequest, $request->validated());
 
         return $this->ok(new ProcurementRequestResource($pr), 'Procurement request updated');
+    }
+
+    public function cancel(Request $request, ProcurementRequest $procurementRequest, SupplyChainService $service)
+    {
+        $pr = $service->cancelProcurementRequest($procurementRequest, $request->user());
+
+        return $this->ok(new ProcurementRequestResource($pr), 'Procurement request cancelled');
     }
 
     public function sendToVendors(ProcurementRequest $procurementRequest, SupplyChainService $service)

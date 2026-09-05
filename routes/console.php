@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('documents:check-expiry')->dailyAt('07:00');
 Schedule::command('rfq:check-overdue')->dailyAt('07:15');
+Schedule::command('forecasts:run')->dailyAt('07:30');

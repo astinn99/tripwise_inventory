@@ -9,7 +9,9 @@ export const InventoryManagement = () => {
     inventory,
     setActiveModal,
     setModalData,
-    searchQuery
+    searchQuery,
+    removeInventoryItem,
+    actionLoading,
   } = useApp();
 
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -18,6 +20,7 @@ export const InventoryManagement = () => {
   const [sortBy, setSortBy] = useState('itemCode');
   const [sortOrder, setSortOrder] = useState('asc');
   const [selectedItemDetails, setSelectedItemDetails] = useState(null);
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   let items = inventory.filter(item => {
     const matchesSearch =
@@ -215,6 +218,14 @@ export const InventoryManagement = () => {
                       >
                         <ShoppingCart className="w-3.5 h-3.5" />
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingRemove(item)}
+                        className="btn btn-outline btn-sm p-1"
+                        title="Remove item from catalog"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                     <div className="inventory-item-stock-actions">
                       <button
@@ -252,6 +263,44 @@ export const InventoryManagement = () => {
           </div>
         )}
       </div>
+
+      {pendingRemove && (
+        <Modal
+          onClose={() => setPendingRemove(null)}
+          icon={Trash2}
+          tone="rose"
+          size="sm"
+          title="Remove inventory item"
+          subtitle={`${pendingRemove.itemCode} will disappear from the catalog.`}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPendingRemove(null)}>
+                Keep item
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={actionLoading}
+                onClick={async () => {
+                  try {
+                    await removeInventoryItem(pendingRemove.id);
+                    setPendingRemove(null);
+                    if (selectedItemDetails?.id === pendingRemove.id) {
+                      setSelectedItemDetails(null);
+                    }
+                  } catch {
+                    // actionError banner
+                  }
+                }}
+              >
+                Remove item
+              </button>
+            </>
+          )}
+        >
+          <p className="text-sm">This removes {pendingRemove.description} from the inventory item list, including items that still have stock.</p>
+        </Modal>
+      )}
 
       {selectedItemDetails && (
         <Modal

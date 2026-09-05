@@ -34,15 +34,15 @@
 .brand-wordmark {
   display: block;
   font-size: 1.35rem;
-  font-weight: 800;
-  color: #E5E7EB;
-  letter-spacing: -0.04em;
+  font-weight: 700;
+  color: #F58700;
+  letter-spacing: 0;
   line-height: 1;
   text-transform: none !important;
 }
 
 .brand-period {
-  color: #E11D48 !important;
+  color: #B3EF0B !important;
 }
 
 .brand-lockup-login .brand-wordmark {
@@ -120,21 +120,21 @@
 }
 
 .nav-btn.portal-btn {
-  border: 1px dashed #334155;
-  color: #F43F5E;
+  border: 1px dashed #A7A9AC;
+  color: #FB9C21;
 }
 
 .nav-btn.portal-btn:hover {
   border-style: solid;
-  border-color: #F43F5E;
-  background: rgba(244, 63, 94, 0.1);
+  border-color: #FB9C21;
+  background: rgba(245, 135, 0, 0.1);
 }
 
 .nav-btn.portal-btn.active {
   background: var(--primary-accent);
   color: #FFFFFF;
   border-style: solid;
-  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.3);
+  box-shadow: 0 4px 12px rgba(245, 135, 0, 0.3);
 }
 
 .nav-icon {
@@ -182,7 +182,7 @@
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #E11D48 0%, #F43F5E 100%);
+  background: linear-gradient(135deg, #F58700 0%, #FB9C21 100%);
   color: #FFFFFF;
   font-size: 0.75rem;
   font-weight: 800;
@@ -268,7 +268,7 @@
 
 .header-search-input {
   width: 100%;
-  background: #F8FAFC;
+  background: #EDEDED;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   padding: 0.5rem 2rem 0.5rem 2.4rem;
@@ -281,7 +281,7 @@
 .header-search-input:focus {
   border-color: var(--primary-accent);
   background: #FFFFFF;
-  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.1);
+  box-shadow: 0 0 0 3px rgba(245, 135, 0, 0.1);
 }
 
 .search-clear-btn {
@@ -307,7 +307,7 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #F8FAFC;
+  background: #EDEDED;
   border: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -390,7 +390,7 @@
 }
 
 .notif-item:hover {
-  background: #F8FAFC;
+  background: #EDEDED;
 }
 
 .notif-item.unread {
@@ -451,7 +451,7 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #E11D48 0%, #F43F5E 100%);
+  background: linear-gradient(135deg, #F58700 0%, #FB9C21 100%);
   color: #FFFFFF;
   font-size: 0.725rem;
   font-weight: 800;
@@ -482,7 +482,7 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: #F8FAFC;
+  background: #EDEDED;
   border: 1px solid var(--border-color);
   align-items: center;
   justify-content: center;

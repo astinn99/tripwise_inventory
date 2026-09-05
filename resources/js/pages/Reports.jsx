@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { BarChart3, Download, Printer, Calendar, FileText, Package, ShoppingCart, Users, Truck } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { composeDtrsRows } from './dtrsRows';
 
 export const Reports = () => {
   const {
@@ -9,11 +10,26 @@ export const Reports = () => {
     purchaseOrders,
     suppliers,
     movements,
-    documents
+    documents,
+    deliveries,
+    refreshReports,
   } = useApp();
 
   const [activeReportTab, setActiveReportTab] = useState('inventory');
   const [dateRange, setDateRange] = useState('2026-08-01 to 2026-08-31');
+  const [reportError, setReportError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    refreshReports().catch((error) => {
+      if (!cancelled) {
+        setReportError(error?.message || 'Unable to load report data.');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Reports Summaries
   const invSummary = {
@@ -37,13 +53,15 @@ export const Reports = () => {
     releasedUnits: movements.filter((m) => m.movementType === 'Releasing').reduce((sum, m) => sum + Number(m.quantity || 0), 0),
   };
 
+  const dtrsRows = composeDtrsRows(documents, purchaseOrders, deliveries);
+
   const dtrsSummary = {
-    total: documents.length,
-    expiringSoon: documents.filter((d) => d.status === 'Expiring Soon').length,
-    expired: documents.filter((d) => d.status === 'Expired').length,
+    total: dtrsRows.length,
+    expiringSoon: dtrsRows.filter((d) => d.status === 'Expiring Soon').length,
+    expired: dtrsRows.filter((d) => d.status === 'Expired').length,
   };
 
-  const dtrsChartData = Object.values(documents.reduce((acc, doc) => {
+  const dtrsChartData = Object.values(dtrsRows.reduce((acc, doc) => {
     const type = doc.type || 'Other';
     acc[type] = acc[type] || { type, count: 0 };
     acc[type].count += 1;
@@ -70,6 +88,12 @@ export const Reports = () => {
           </button>
         </div>
       </div>
+
+      {reportError ? (
+        <div className="empty-state mb-4">
+          <p>{reportError}</p>
+        </div>
+      ) : null}
 
       {/* Report Categories Tabs & Filters */}
       <div className="filter-bar">
@@ -147,18 +171,22 @@ export const Reports = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map(i => (
+                  {inventory.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-xs text-secondary p-4">No inventory items to value yet.</td>
+                    </tr>
+                  ) : inventory.map(i => (
                     <tr key={i.id}>
                       <td className="font-mono text-xs text-blue-400 font-bold">{i.itemCode}</td>
-                      <td className="font-bold text-xs text-white">{i.description}</td>
+                      <td className="font-bold text-xs text-white">{i.itemName || i.description || '—'}</td>
                       <td className="text-xs text-slate-300">{i.category}</td>
                       <td className="text-center font-bold">{i.quantity} {i.unit}</td>
                       <td className="text-center font-bold text-rose-400">{i.damagedQuantity || 0}</td>
-                      <td className="text-right font-mono text-xs text-slate-300">₱{Number(i.cost).toLocaleString()}</td>
+                      <td className="text-right font-mono text-xs text-slate-300">₱{Number(i.cost || 0).toLocaleString()}</td>
                       <td className="text-right font-mono text-xs text-emerald-400 font-bold">
-                        ₱{(i.cost * (i.quantity + Number(i.damagedQuantity || 0))).toLocaleString()}
+                        ₱{(Number(i.cost || 0) * (Number(i.quantity || 0) + Number(i.damagedQuantity || 0))).toLocaleString()}
                       </td>
-                      <td><span className={`badge badge-${i.status.toLowerCase().replace(/ /g, '-')}`}>{i.status}</span></td>
+                      <td><span className={`badge badge-${String(i.status || 'normal').toLowerCase().replace(/ /g, '-')}`}>{i.status || 'NORMAL'}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -245,15 +273,19 @@ export const Reports = () => {
                 </tr>
               </thead>
               <tbody>
-                {suppliers.map(s => (
+                {suppliers.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-xs text-secondary p-4">No suppliers to score yet.</td>
+                  </tr>
+                ) : suppliers.map(s => (
                   <tr key={s.id}>
                     <td className="font-mono text-xs text-blue-400 font-bold">{s.id}</td>
-                    <td className="font-bold text-xs text-white">{s.companyName}</td>
-                    <td className="text-xs text-slate-300">{s.contactPerson}</td>
-                    <td className="font-bold text-emerald-400 text-xs">{s.qualityScore}%</td>
-                    <td className="font-bold text-blue-400 text-xs">{s.deliveryPerformance}%</td>
-                    <td className="font-bold text-purple-400 text-xs">{s.responsivenessScore}%</td>
-                    <td><span className="badge badge-normal font-bold">★ {s.overallScore}</span></td>
+                    <td className="font-bold text-xs text-white">{s.companyName || '—'}</td>
+                    <td className="text-xs text-slate-300">{s.contactPerson || '—'}</td>
+                    <td className="font-bold text-emerald-400 text-xs">{s.qualityScore != null ? `${s.qualityScore}%` : '—'}</td>
+                    <td className="font-bold text-blue-400 text-xs">{s.deliveryPerformance != null ? `${s.deliveryPerformance}%` : '—'}</td>
+                    <td className="font-bold text-purple-400 text-xs">{s.responsivenessScore != null ? `${s.responsivenessScore}%` : '—'}</td>
+                    <td><span className="badge badge-normal font-bold">★ {s.overallScore ?? '—'}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -356,11 +388,11 @@ export const Reports = () => {
               <div style={{ width: '100%', height: 250 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={dtrsChartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#A7A9AC" />
                     <XAxis dataKey="type" stroke="#000000" tick={{ fill: '#000000', fontWeight: 600, fontSize: 11 }} />
                     <YAxis allowDecimals={false} stroke="#000000" tick={{ fill: '#000000', fontWeight: 600 }} />
-                    <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
-                    <Bar dataKey="count" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                    <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#A7A9AC', borderRadius: 6, color: '#000000', fontWeight: 700 }} />
+                    <Bar dataKey="count" fill="#F58700" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -371,7 +403,7 @@ export const Reports = () => {
             <div className="panel-header">
               <span className="panel-title"><FileText className="w-5 h-5 text-blue-400" /> DTRS Document Expiration Report</span>
             </div>
-            {documents.length === 0 ? (
+            {dtrsRows.length === 0 ? (
               <div className="empty-state">
                 <p>No DTRS documents to report yet.</p>
                 <p>Archive a warranty, contract, or invoice, or receive a vendor warranty through inspection.</p>
@@ -393,7 +425,7 @@ export const Reports = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {documents.map((doc) => (
+                    {dtrsRows.map((doc) => (
                       <tr key={doc.id}>
                         <td className="font-mono text-xs text-blue-400 font-bold">{doc.id}</td>
                         <td className="font-bold text-xs text-white">{doc.title}</td>

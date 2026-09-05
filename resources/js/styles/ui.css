@@ -34,9 +34,9 @@
 .subsystem-heading,
 .page-title {
   font-size: 1.5rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.25;
 }
 
 .subsystem-subtext,
@@ -86,7 +86,8 @@
 
 .kpi-value {
   font-size: 1.85rem;
-  letter-spacing: -0.03em;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .panel,
@@ -147,11 +148,26 @@
   background: transparent;
 }
 
+.stock-monitoring-table {
+  overflow: hidden;
+  width: 100%;
+}
+
+.stock-monitoring-page .custom-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.stock-monitoring-page .custom-table th,
+.stock-monitoring-page .custom-table td {
+  white-space: normal;
+}
+
 .custom-table th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #F8FAFC;
+  background: #EDEDED;
   border-bottom: 1px solid var(--border-subtle);
   padding: 0.7rem 0.95rem;
 }
@@ -283,18 +299,18 @@
   font-size: 1.25rem;
   font-weight: 800;
   line-height: 1;
-  caret-color: #E11D48;
+  caret-color: #F58700;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .otp-box.is-filled {
-  border-color: #FECDD3;
+  border-color: #FDE4C2;
 }
 
 .otp-box:focus {
   outline: none;
-  border-color: #E11D48;
-  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.16);
+  border-color: #F58700;
+  box-shadow: 0 0 0 3px rgba(245, 135, 0, 0.16);
 }
 
 .otp-box.is-error {
@@ -409,7 +425,7 @@
   align-items: stretch;
   justify-content: stretch;
   padding: 0;
-  background: #F8FAFC;
+  background: #EDEDED;
 }
 
 .login-hero {
@@ -460,7 +476,7 @@
   margin-bottom: 1rem;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
-  background: rgba(225, 29, 72, 0.92);
+  background: rgba(245, 135, 0, 0.92);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -490,7 +506,7 @@
   justify-content: center;
   min-height: 100vh;
   padding: 1.5rem 1.25rem;
-  background: #F8FAFC;
+  background: #EDEDED;
 }
 
 .login-screen-inventory .login-card {
@@ -589,8 +605,8 @@
 }
 
 .nav-badge {
-  background: #1E293B;
-  color: #E2E8F0;
+  background: #1F1F1F;
+  color: #EDEDED;
 }
 
 .nav-badge.bg-amber {
@@ -599,8 +615,8 @@
 }
 
 .nav-badge.bg-blue {
-  background: rgba(29, 78, 216, 0.22);
-  color: #93C5FD;
+  background: rgba(251, 156, 33, 0.22);
+  color: #FBA93A;
 }
 
 .nav-badge.bg-rose {

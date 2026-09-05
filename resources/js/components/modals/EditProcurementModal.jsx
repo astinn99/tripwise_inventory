@@ -96,10 +96,8 @@ export const EditProcurementModal = () => {
           value={priority}
           onChange={(event) => {
             const next = event.target.value;
-            setNeededInDays((current) => (
-              Number(current) === defaultNeededInDays(priority) ? defaultNeededInDays(next) : current
-            ));
             setPriority(next);
+            setNeededInDays(defaultNeededInDays(next));
           }}
         >
           <option value="NORMAL">NORMAL</option>

@@ -4,6 +4,7 @@ import { api, ApiError, expireLocalAuth, fetchCurrentUser, fileToBase64, getAuth
 import { SESSION_EXPIRED_KEY, shouldExpireSession, subscribeToActivity, touchActivity } from '../services/session';
 import { compressImageFile } from '../services/images';
 import { prefetchItemImages } from '../components/ui/ItemThumb';
+import { clearVendorThreadCache } from '../components/ui/VendorThread';
 import { createEcho } from '../echo';
 import { normalizeOtpChallenge } from '../services/otp';
 
@@ -502,6 +503,9 @@ export const AppProvider = ({ children }) => {
     const [collections, setCollections] = useState(hydrateCollections);
     const [activeModal, setActiveModal] = useState(null);
     const [modalData, setModalData] = useState(null);
+    const [vendorMessageUnread, setVendorMessageUnread] = useState(0);
+    const [vendorMessageRevision, setVendorMessageRevision] = useState(0);
+    const [vendorMessageFocus, setVendorMessageFocus] = useState(null);
     const echoRef = useRef(null);
     const loadCollectionsRef = useRef(null);
     const moreRequestedRef = useRef(false);
@@ -510,6 +514,7 @@ export const AppProvider = ({ children }) => {
     const livePauseUntilRef = useRef(0);
     const liveAbortRef = useRef(null);
     const mutationGenerationRef = useRef(0);
+    const lastVendorMessageStampRef = useRef('');
 
     const user = isVendorPortal ? vendorUser : internalUser;
 
@@ -535,6 +540,14 @@ export const AppProvider = ({ children }) => {
         setPortalUser(nextUser, targetPortal);
         setCachedUser(nextUser, targetPortal);
         return nextUser;
+    };
+
+    const patchSessionUser = (partial) => {
+        if (!user || !partial) {
+            return user;
+        }
+
+        return applyUser({ ...user, ...partial }, portal);
     };
 
     const applyBootstrapPayload = (data, actor, { fetchedAt = Date.now(), generation } = {}) => {
@@ -565,6 +578,7 @@ export const AppProvider = ({ children }) => {
                 purchaseOrders: data.purchaseOrders ?? previous.purchaseOrders,
                 opportunities: data.opportunities ?? previous.opportunities,
                 notifications: data.notifications ?? previous.notifications,
+                suppliers: Array.isArray(data.suppliers) ? data.suppliers : previous.suppliers,
             }));
             return;
         }
@@ -585,7 +599,7 @@ export const AppProvider = ({ children }) => {
                     next.inventory = mergeInventoryByTimestamp(next.inventory, data.inventory);
                     return;
                 }
-                if (key === 'deliveries' || key === 'movements' || key === 'supplyRequests' || key === 'releases') {
+                if (key === 'deliveries' || key === 'movements' || key === 'supplyRequests' || key === 'releases' || key === 'documents') {
                     next[key] = mergeListsById(next[key], data[key], ID_KEYS[key]);
                     return;
                 }
@@ -692,7 +706,7 @@ export const AppProvider = ({ children }) => {
             return;
         }
 
-        const { createdProcurement, updatedInventory, createdMovements, updatedSupplyRequest, ...record } = result;
+        const { createdProcurement, updatedInventory, createdMovements, createdRelease, updatedSupplyRequest, ...record } = result;
         const collection = detectCollection(record);
         if (updatedInventory) {
             liveStampsRef.current = { ...liveStampsRef.current, inventory: '' };
@@ -741,6 +755,16 @@ export const AppProvider = ({ children }) => {
                 next = {
                     ...next,
                     procurementRequests: upsertList(next.procurementRequests, createdProcurement, 'id'),
+                };
+            }
+            if (createdRelease) {
+                next = {
+                    ...next,
+                    releases: upsertList(
+                        next.releases.filter((row) => !String(row.id || '').startsWith('tmp-')),
+                        createdRelease,
+                        'id'
+                    ),
                 };
             }
             return next;
@@ -998,6 +1022,14 @@ export const AppProvider = ({ children }) => {
                 }
                 if (data.stamps) {
                     liveStampsRef.current = data.stamps;
+                    const nextStamp = String(data.stamps.vendorMessages ?? '');
+                    if (nextStamp !== lastVendorMessageStampRef.current) {
+                        const hadStamp = lastVendorMessageStampRef.current !== '';
+                        lastVendorMessageStampRef.current = nextStamp;
+                        if (hadStamp) {
+                            setVendorMessageRevision((current) => current + 1);
+                        }
+                    }
                 }
                 const generation = mutationGenerationRef.current;
                 applyBootstrapPayload(data, user, { fetchedAt: Date.now(), generation });
@@ -1082,6 +1114,7 @@ export const AppProvider = ({ children }) => {
             moreRequestedRef.current = false;
             liveStampsRef.current = {};
             coreReadyRef.current = false;
+            clearVendorThreadCache();
         }
     };
 
@@ -1109,6 +1142,7 @@ export const AppProvider = ({ children }) => {
         moreRequestedRef.current = false;
         liveStampsRef.current = {};
         coreReadyRef.current = false;
+        clearVendorThreadCache();
     };
 
     const expireAllSessionsRef = useRef(expireAllSessions);
@@ -1503,8 +1537,81 @@ export const AppProvider = ({ children }) => {
             }
         );
 
+    const removeInventoryItem = (itemId) =>
+        runAction(() => api.delete(`/api/inventory-items/${itemId}`), {
+            optimistic: (prev) => {
+                const inventory = prev.inventory.filter((item) => item.id !== itemId);
+                return {
+                    ...prev,
+                    inventory,
+                    storageLocations: syncStorageLocationsFromInventory(prev.storageLocations, inventory),
+                };
+            },
+        });
+
     const adjustInventoryItem = (itemId, payload) =>
-        runAction(() => api.post(`/api/inventory-items/${itemId}/adjust`, payload));
+        runAction(() => api.post(`/api/inventory-items/${itemId}/adjust`, payload), {
+            optimistic: (prev) => {
+                const item = prev.inventory.find((row) => row.id === itemId);
+                if (!item) {
+                    return prev;
+                }
+
+                const qty = Number(payload.quantity) || 0;
+                const type = payload.type;
+                let quantity = Number(item.quantity || 0);
+                let damagedQuantity = Number(item.damagedQuantity || 0);
+
+                if (type === 'Damaged') {
+                    quantity -= qty;
+                    damagedQuantity += qty;
+                } else if ((type === 'Disposed' || type === 'Return') && payload.source === 'damaged') {
+                    damagedQuantity -= qty;
+                } else {
+                    quantity -= qty;
+                }
+
+                quantity = Math.max(0, quantity);
+                damagedQuantity = Math.max(0, damagedQuantity);
+                const min = Number(item.minStockLevel || 0);
+                const inventory = prev.inventory.map((row) => (
+                    row.id === itemId
+                        ? {
+                            ...row,
+                            quantity,
+                            damagedQuantity,
+                            status: quantity <= 0 ? 'OUT OF STOCK' : quantity <= min ? 'LOW STOCK' : 'NORMAL',
+                        }
+                        : row
+                ));
+
+                if (type !== 'ManualRelease') {
+                    return { ...prev, inventory };
+                }
+
+                const now = new Date();
+                const pad = (value) => String(value).padStart(2, '0');
+                const releaseDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+                return {
+                    ...prev,
+                    inventory,
+                    releases: [{
+                        id: `tmp-rel-${now.getTime()}`,
+                        requestId: 'MANUAL',
+                        requestingDepartment: payload.department,
+                        itemCode: item.itemCode,
+                        itemName: item.description || item.itemName,
+                        quantityReleased: qty,
+                        approvalStatus: 'Manual warehouse issue',
+                        stockStatus: 'Deducted from Inventory',
+                        releaseDate,
+                        releasedTo: payload.releasedTo,
+                        dispatchedBy: user?.name || '',
+                    }, ...prev.releases],
+                };
+            },
+        });
 
     const startStockCount = (title, locationName) =>
         runAction(async () => {
@@ -1535,6 +1642,23 @@ export const AppProvider = ({ children }) => {
             () => postQuotation(`/api/quotations/${quoteId}`, quoteData, signal, true),
             { pauseLiveFor: 8000 },
         );
+
+    const refreshDocuments = () =>
+        api.get('/api/documents').then((rows) => {
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return rows;
+            }
+            applyBootstrapPayload({ documents: rows }, user ?? { role: 'supply_chain' });
+            writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), documents: rows });
+            return rows;
+        });
+
+    const refreshReports = () =>
+        api.get('/api/reports').then((data) => {
+            applyBootstrapPayload(data, user ?? { role: 'supply_chain' });
+            writeBootstrapCache(portal, { ...(readBootstrapCache(portal) || {}), ...data });
+            return data;
+        });
 
     const addDocument = (doc) =>
         runAction(() => {
@@ -1597,6 +1721,24 @@ export const AppProvider = ({ children }) => {
                 ...prev,
                 procurementRequests: prev.procurementRequests.map((item) => (
                     item.id === prId ? mergeDefined(item, data) : item
+                )),
+            }),
+        });
+
+    const cancelProcurementRequest = (prNumber) =>
+        runAction(() => api.post(`/api/procurement-requests/${prNumber}/cancel`), {
+            optimistic: (prev) => ({
+                ...prev,
+                procurementRequests: prev.procurementRequests.map((pr) => (
+                    pr.id === prNumber
+                        ? { ...pr, status: 'Cancelled', canCancel: false, canEdit: false }
+                        : pr
+                )),
+                opportunities: prev.opportunities.filter((opp) => opp.prNumber !== prNumber),
+                purchaseOrders: prev.purchaseOrders.map((po) => (
+                    po.procurementId === prNumber && po.poStatus !== 'Fully Delivered'
+                        ? { ...po, poStatus: 'Cancelled' }
+                        : po
                 )),
             }),
         });
@@ -1690,6 +1832,42 @@ export const AppProvider = ({ children }) => {
         }
     };
 
+    const openVendorMessages = (supplierId) => {
+        setVendorMessageFocus(supplierId || null);
+        openTab('vendor_messages');
+    };
+
+    useEffect(() => {
+        if (!user) {
+            setVendorMessageUnread(0);
+            lastVendorMessageStampRef.current = '';
+            return undefined;
+        }
+
+        let cancelled = false;
+        api.get('/api/messages')
+            .then((data) => {
+                if (cancelled) {
+                    return;
+                }
+                if (user.role === 'supplier') {
+                    setVendorMessageUnread(Number(data?.unreadCount) || 0);
+                    return;
+                }
+                const rows = Array.isArray(data) ? data : [];
+                setVendorMessageUnread(rows.reduce((sum, row) => sum + (Number(row.unreadCount) || 0), 0));
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setVendorMessageUnread(0);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.id, user?.role, vendorMessageRevision]);
+
     useEffect(() => {
         const onKeyDown = (event) => {
             if (event.key === 'Escape') {
@@ -1738,6 +1916,7 @@ export const AppProvider = ({ children }) => {
             verifyLoginOtp,
             resendLoginOtp,
             acceptSession,
+            patchSessionUser,
             logout,
             processSupplyRequestStock,
             selectSupplierAndCreatePO,
@@ -1750,17 +1929,27 @@ export const AppProvider = ({ children }) => {
             bootstrapWarehouseLayout,
             moveInventoryItem,
             adjustInventoryItem,
+            removeInventoryItem,
             startStockCount,
             submitPhysicalCount,
             submitSupplierQuotation,
             updateSupplierQuotation,
             addDocument,
+            refreshDocuments,
+            refreshReports,
             markNotificationRead,
             markAllNotificationsRead,
             createManualProcurementRequest,
             updateProcurementRequest,
             sendProcurementToVendors,
+            cancelProcurementRequest,
             approveSupplier,
+            vendorMessageUnread,
+            setVendorMessageUnread,
+            vendorMessageRevision,
+            vendorMessageFocus,
+            setVendorMessageFocus,
+            openVendorMessages,
         }}>
             {children}
         </AppContext.Provider>

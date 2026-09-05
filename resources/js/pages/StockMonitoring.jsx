@@ -1,7 +1,15 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Activity, AlertTriangle, XCircle, CheckCircle2, ShoppingCart } from 'lucide-react';
 import { ItemIdentity } from '../components/ui/ItemThumb';
+import { getForecasts, peekForecasts } from '../services/api';
+import { formatFriendlyDate } from '../services/dates';
+
+const forecastBadgeClass = (badge) => {
+  if (badge === 'At risk') return 'badge-low-stock';
+  if (badge === 'Covered') return 'badge-normal';
+  return 'badge-draft';
+};
 
 export const StockMonitoring = () => {
   const {
@@ -12,6 +20,38 @@ export const StockMonitoring = () => {
     setActiveModal,
     setModalData
   } = useApp();
+  const [forecasts, setForecasts] = useState(() => peekForecasts() ?? []);
+  const [forecastError, setForecastError] = useState('');
+  const [forecastLoading, setForecastLoading] = useState(() => peekForecasts() === null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getForecasts()
+      .then((data) => {
+        if (!cancelled) {
+          setForecasts(Array.isArray(data) ? data : []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setForecastError(error?.message || 'Unable to load forecasts.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setForecastLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const forecastByCode = Object.fromEntries(forecasts.map((run) => [run.itemCode, run]));
+  const forecastAtRiskNormal = inventory.filter((item) => (
+    item.status === 'NORMAL'
+    && forecastByCode[item.itemCode]?.stockoutOn
+  )).length;
 
   const normalItems = inventory.filter(i => i.status === 'NORMAL');
   const lowStockItems = inventory.filter(i => i.status === 'LOW STOCK');
@@ -24,7 +64,7 @@ export const StockMonitoring = () => {
   );
 
   const openRestock = (item) => {
-    setModalData(item);
+    setModalData({ ...item, forecast: forecastByCode[item.itemCode] || null });
     setActiveModal('manual_restock');
   };
 
@@ -70,6 +110,7 @@ export const StockMonitoring = () => {
                 <h4 className="text-sm font-extrabold text-black">Automated Threshold Warning</h4>
                 <p className="text-xs text-black font-semibold mt-0.5">
                   {lowStockItems.length + outOfStockItems.length} item(s) are currently below their minimum safety stock level.
+                  {forecastAtRiskNormal > 0 ? ` ${forecastAtRiskNormal} NORMAL item(s) are still forecasted to stock out within the current horizon.` : ''}
                 </p>
               </div>
             </div>
@@ -80,6 +121,29 @@ export const StockMonitoring = () => {
         </div>
       )}
 
+      {forecastAtRiskNormal > 0 && lowStockItems.length === 0 && outOfStockItems.length === 0 ? (
+        <div className="panel-card bg-amber-50 border-amber-300 mb-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0" />
+            <p className="text-xs text-black font-semibold">
+              {forecastAtRiskNormal} NORMAL item(s) are forecasted to stock out within the current horizon.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {forecastLoading ? (
+        <div className="empty-state mb-4">
+          <p>Loading forecasts…</p>
+        </div>
+      ) : null}
+
+      {forecastError ? (
+        <div className="empty-state mb-4">
+          <p>{forecastError}</p>
+        </div>
+      ) : null}
+
       {/* Main Stock Threshold Table */}
       <div className="panel-card">
         <div className="panel-header">
@@ -88,55 +152,66 @@ export const StockMonitoring = () => {
           </span>
         </div>
 
-        <div className="table-responsive">
+        <div className="stock-monitoring-table">
           <table className="custom-table table-stack">
             <thead>
               <tr>
-                <th>Item Code</th>
-                <th>Item Name</th>
-                <th>Category</th>
-                <th className="text-center">Current Stock</th>
-                <th className="text-center">Min Safety Level</th>
-                <th>Stock Status</th>
-                <th>Location</th>
-                <th>Last Movement</th>
-                <th>Supplier</th>
+                <th>Item</th>
+                <th className="text-center">Stock</th>
+                <th>Status</th>
+                <th>Forecast</th>
+                <th>Placement</th>
                 <th className="text-right">Action</th>
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => {
                 const lastMov = movements.find(m => m.itemCode === item.itemCode);
+                const forecast = forecastByCode[item.itemCode];
+                const badge = forecast?.forecastBadge || (forecastError ? 'No forecast' : 'No forecast');
 
                 return (
                   <tr key={item.id}>
-                    <td data-label="Item Code" className="font-mono text-xs text-blue font-bold">{item.itemCode}</td>
-                    <td data-label="Item Name">
+                    <td data-label="Item">
                       <ItemIdentity
                         src={item.imageUrl}
                         name={item.description}
+                        code={item.itemCode}
+                        extra={item.category}
                       />
                     </td>
-                    <td data-label="Category" className="text-xs text-black font-semibold">{item.category}</td>
-                    <td data-label="Current Stock" className="text-center font-extrabold text-lg">
-                      <span className={item.status === 'OUT OF STOCK' ? 'text-danger' : item.status === 'LOW STOCK' ? 'text-warning' : 'text-success'}>
+                    <td data-label="Stock" className="text-center">
+                      <div className={`font-extrabold text-lg ${item.status === 'OUT OF STOCK' ? 'text-danger' : item.status === 'LOW STOCK' ? 'text-warning' : 'text-success'}`}>
                         {item.quantity} {item.unit}
-                      </span>
+                      </div>
+                      <div className="text-xs text-warning font-bold">Min {item.minStockLevel}</div>
                       {Number(item.damagedQuantity || 0) > 0 && (
                         <div className="text-xs text-danger font-bold">{item.damagedQuantity} quarantined</div>
                       )}
                     </td>
-                    <td data-label="Min Safety Level" className="text-center font-bold text-warning text-sm">{item.minStockLevel}</td>
-                    <td data-label="Stock Status">
+                    <td data-label="Status">
                       <span className={`badge badge-${item.status.toLowerCase().replace(/ /g, '-')}`}>
                         {item.status}
                       </span>
                     </td>
-                    <td data-label="Location" className="text-xs font-mono text-black font-semibold">{item.location}</td>
-                    <td data-label="Last Movement" className="text-xs text-black font-semibold">
-                      {lastMov ? `${lastMov.date} (${lastMov.movementType})` : 'No recent movement'}
+                    <td data-label="Forecast">
+                      <div className="stock-monitoring-meta">
+                        <span className={`badge ${forecastBadgeClass(badge)}`}>{badge}</span>
+                        <span className="text-xs font-bold">Suggested {forecast ? forecast.reorderQty : '—'}</span>
+                        <span className="text-xs font-semibold">
+                          {forecast?.stockoutOn ? formatFriendlyDate(forecast.stockoutOn, { relative: true }) : 'No predicted stockout'}
+                        </span>
+                      </div>
                     </td>
-                    <td data-label="Supplier" className="text-xs text-black font-semibold">{item.supplier}</td>
+                    <td data-label="Placement">
+                      <div className="stock-monitoring-meta">
+                        <span className="text-xs font-mono font-semibold">{item.location}</span>
+                        <span className="text-xs font-semibold">
+                          {lastMov ? `${lastMov.date} (${lastMov.movementType})` : 'No recent movement'}
+                        </span>
+                        <span className="text-xs font-semibold">{item.supplier}</span>
+                      </div>
+                    </td>
                     <td data-label="Action" className="text-right table-stack-actions">
                       <button
                         onClick={() => openRestock(item)}

@@ -129,15 +129,18 @@ class AppBootstrapService
                     (SELECT COALESCE(MAX(id), 0) FROM purchase_orders WHERE supplier_id = ?) AS po_id,
                     (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM purchase_orders WHERE supplier_id = ?) AS po_at,
                     (SELECT COALESCE(MAX(id), 0) FROM supplier_opportunities WHERE supplier_id = ?) AS opp_id,
-                    (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id = ?) AS notif_id',
-                [$supplierId, $supplierId, $supplierId, $supplierId, $supplierId, $userId]
+                    (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM supplier_opportunities WHERE supplier_id = ?) AS opp_at,
+                    (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id = ?) AS notif_id,
+                    (SELECT COALESCE(MAX(id), 0) FROM vendor_messages WHERE supplier_id = ?) AS msg_id',
+                [$supplierId, $supplierId, $supplierId, $supplierId, $supplierId, $supplierId, $userId, $supplierId]
             );
 
             return [
                 'quotations' => ($row->quotations_id ?? 0).'|'.($row->quotations_at ?? '0'),
                 'purchaseOrders' => ($row->po_id ?? 0).'|'.($row->po_at ?? '0'),
-                'opportunities' => (string) ($row->opp_id ?? 0),
+                'opportunities' => ($row->opp_id ?? 0).'|'.($row->opp_at ?? '0'),
                 'notifications' => (string) ($row->notif_id ?? 0),
+                'vendorMessages' => (string) ($row->msg_id ?? 0),
             ];
         }
 
@@ -157,7 +160,8 @@ class AppBootstrapService
                 (SELECT COALESCE(MAX(id), 0) FROM releases) AS rel_id,
                 (SELECT COALESCE(MAX(id), 0) FROM suppliers WHERE deleted_at IS NULL) AS suppliers_id,
                 (SELECT COALESCE(CAST(MAX(updated_at) AS TEXT), \'0\') FROM suppliers WHERE deleted_at IS NULL) AS suppliers_at,
-                (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id IS NULL) AS notif_id'
+                (SELECT COALESCE(MAX(id), 0) FROM supply_notifications WHERE user_id IS NULL) AS notif_id,
+                (SELECT COALESCE(MAX(id), 0) FROM vendor_messages) AS msg_id'
         );
 
         return [
@@ -170,6 +174,7 @@ class AppBootstrapService
             'releases' => (string) ($row->rel_id ?? 0),
             'suppliers' => ($row->suppliers_id ?? 0).'|'.($row->suppliers_at ?? '0'),
             'notifications' => (string) ($row->notif_id ?? 0),
+            'vendorMessages' => (string) ($row->msg_id ?? 0),
         ];
     }
 
@@ -313,7 +318,10 @@ class AppBootstrapService
     {
         return $this->resolve(ProcurementRequestResource::collection(
             ProcurementRequest::query()
-                ->with('catalogItem:id,item_code,code,image_path')
+                ->with([
+                    'catalogItem:id,item_code,code,image_path',
+                    'purchaseOrder:id,procurement_request_id,po_status',
+                ])
                 ->withCount(['opportunities', 'quotations'])
                 ->withMin('opportunities', 'deadline')
                 ->orderByDesc('id')
@@ -337,11 +345,16 @@ class AppBootstrapService
 
         $opportunities = SupplierOpportunity::rankedForVendor($supplierId, openOnly: (bool) $supplierId);
 
+        $profile = $user->supplier
+            ? $user->supplier->load(['documents' => fn ($query) => $query->orderByDesc('id')])
+            : null;
+
         return [
             'quotations' => $this->quotationsPayload($supplierId),
             'purchaseOrders' => $this->resolve(PurchaseOrderResource::collection($purchaseOrders)),
             'opportunities' => $this->resolve(OpportunityResource::collection($opportunities)),
             'notifications' => $this->notificationsPayload($user->id),
+            'suppliers' => $profile ? $this->resolve(SupplierResource::collection(collect([$profile]))) : [],
         ];
     }
 
@@ -893,6 +906,10 @@ SQL);
 
     private function jsonList(mixed $value): array
     {
+        if (is_object($value)) {
+            $value = json_decode(json_encode($value), true);
+        }
+
         if (is_array($value)) {
             return array_values($value);
         }

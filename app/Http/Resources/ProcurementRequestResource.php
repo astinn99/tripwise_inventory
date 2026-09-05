@@ -51,6 +51,7 @@ class ProcurementRequestResource extends JsonResource
             'quoteDeadline' => $quoteDeadline,
             'rfqOverdue' => $rfqOverdue,
             'canEdit' => $this->status === 'For Procurement' && ! $this->po_number,
+            'canCancel' => $this->isCancellable(),
             'sentToVendors' => $this->status !== 'For Procurement' || ((int) ($this->opportunities_count ?? 0) > 0),
         ];
     }

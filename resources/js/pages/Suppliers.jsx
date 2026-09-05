@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Users, Phone, Mail, Building, Star } from 'lucide-react';
+import { Users, Phone, Mail, Building, Star, MessageSquare } from 'lucide-react';
 import { Modal, displayValue } from '../components/ui/Modal';
 import { api } from '../services/api';
 import { CredentialFiles } from '../components/ui/CredentialFiles';
 
 export const Suppliers = () => {
-  const { suppliers, searchQuery, approveSupplier, actionLoading } = useApp();
+  const { suppliers, searchQuery, approveSupplier, actionLoading, openVendorMessages } = useApp();
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [profile, setProfile] = useState(null);
+  const profileRequestRef = useRef(0);
 
   const filteredSuppliers = suppliers.filter(s =>
     s.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -22,18 +23,27 @@ export const Suppliers = () => {
   );
 
   const openProfile = async (supplier) => {
+    const requestId = profileRequestRef.current + 1;
+    profileRequestRef.current = requestId;
     setSelectedSupplier(supplier);
     setProfile(supplier);
     try {
       const detail = await api.get(`/api/suppliers/${supplier.id}`);
+      if (profileRequestRef.current !== requestId) {
+        return;
+      }
       setProfile(detail);
       setSelectedSupplier(detail);
     } catch {
+      if (profileRequestRef.current !== requestId) {
+        return;
+      }
       setProfile(supplier);
     }
   };
 
   const closeProfile = () => {
+    profileRequestRef.current += 1;
     setSelectedSupplier(null);
     setProfile(null);
   };
@@ -136,6 +146,17 @@ export const Suppliers = () => {
           subtitle="Credentials, uploaded permits, banking details, and rolling performance scores."
           footer={(
             <>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  const supplierId = selectedSupplier.id;
+                  closeProfile();
+                  openVendorMessages(supplierId);
+                }}
+              >
+                <MessageSquare className="w-4 h-4" /> Message vendor
+              </button>
               {selectedSupplier.status !== 'Active' ? (
                 <button type="button" onClick={handleApprove} className="btn btn-primary btn-sm" disabled={actionLoading}>
                   {actionLoading ? 'Approving...' : 'Approve vendor'}

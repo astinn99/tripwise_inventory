@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { VendorApp } from './VendorApp';
@@ -23,6 +23,7 @@ import { StockCount } from './pages/StockCount';
 import { StockMonitoring } from './pages/StockMonitoring';
 import { StorageLocations } from './pages/StorageLocations';
 import { Suppliers } from './pages/Suppliers';
+import { VendorMessages } from './pages/VendorMessages';
 import { SupplyRequests } from './pages/SupplyRequests';
 import { Login } from './pages/Login';
 
@@ -43,6 +44,7 @@ import './styles/layout.css';
 import './styles/ui.css';
 
 const Reports = lazy(() => import('./pages/Reports').then((module) => ({ default: module.Reports })));
+const Forecasts = lazy(() => import('./pages/Forecasts').then((module) => ({ default: module.Forecasts })));
 
 class PageErrorBoundary extends React.Component {
     constructor(props) {
@@ -81,6 +83,7 @@ const pageMap = {
     quotations: Quotations,
     purchase_orders: PurchaseOrders,
     suppliers: Suppliers,
+    vendor_messages: VendorMessages,
     items: InventoryManagement,
     stock_monitoring: StockMonitoring,
     inventory_movements: InventoryMovements,
@@ -92,6 +95,7 @@ const pageMap = {
     documents: Documents,
     expiring_documents: ExpiringDocuments,
     reports: Reports,
+    forecasts: Forecasts,
     notifications: Notifications,
 };
 
@@ -107,6 +111,13 @@ function InternalApp() {
         sidebarOpen,
         setSidebarOpen,
     } = useApp();
+    const [keepForecasts, setKeepForecasts] = useState(activeTab === 'forecasts');
+
+    useEffect(() => {
+        if (activeTab === 'forecasts') {
+            setKeepForecasts(true);
+        }
+    }, [activeTab]);
 
     if (bootError) {
         return (
@@ -151,7 +162,15 @@ function InternalApp() {
                     )}
                     <Suspense fallback={null}>
                         <PageErrorBoundary resetKey={activeTab}>
-                            <CurrentPage />
+                            <div hidden={activeTab !== 'vendor_messages'}>
+                                <VendorMessages />
+                            </div>
+                            {(activeTab === 'forecasts' || keepForecasts) ? (
+                                <div hidden={activeTab !== 'forecasts'}>
+                                    <Forecasts />
+                                </div>
+                            ) : null}
+                            {activeTab !== 'vendor_messages' && activeTab !== 'forecasts' ? <CurrentPage /> : null}
                         </PageErrorBoundary>
                     </Suspense>
                 </main>

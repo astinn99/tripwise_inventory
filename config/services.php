@@ -39,4 +39,9 @@ return [
         'api_key' => env('DEPARTMENT_API_KEY'),
     ],
 
+    'forecast' => [
+        'python' => env('FORECAST_PYTHON') ?: 'python',
+        'script' => env('FORECAST_SCRIPT') ?: base_path('python/forecast.py'),
+    ],
+
 ];

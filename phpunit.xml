@@ -40,5 +40,7 @@
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="DEPARTMENT_API_KEY" value="testing-department-key"/>
+        <env name="FORECAST_PYTHON" value="python"/>
+        <env name="FORECAST_SCRIPT" value=""/>
     </php>
 </phpunit>

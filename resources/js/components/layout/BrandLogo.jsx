@@ -7,7 +7,7 @@ export const BrandLogo = ({ subtitle, variant = 'sidebar' }) => (
       aria-label="TripWise."
       style={{ textTransform: 'none' }}
     >
-      TripWise<span className="brand-period" style={{ color: '#E11D48', textTransform: 'none' }}>.</span>
+      TripWise<span className="brand-period" style={{ color: '#B3EF0B', textTransform: 'none' }}>.</span>
     </span>
     {subtitle ? <span className="brand-sub">{subtitle}</span> : null}
   </div>

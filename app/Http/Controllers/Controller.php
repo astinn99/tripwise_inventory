@@ -24,6 +24,10 @@ abstract class Controller
         if ($movements !== []) {
             $payload['createdMovements'] = $movements;
         }
+        $release = $service->recordedReleasePayload();
+        if ($release !== null) {
+            $payload['createdRelease'] = $release;
+        }
 
         return $payload;
     }

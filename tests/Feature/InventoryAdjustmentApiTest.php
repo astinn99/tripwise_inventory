@@ -118,7 +118,11 @@ class InventoryAdjustmentApiTest extends TestCase
                 'department' => 'Dispatch',
             ])
             ->assertOk()
-            ->assertJsonPath('data.quantity', 6);
+            ->assertJsonPath('data.quantity', 6)
+            ->assertJsonPath('data.createdRelease.requestId', 'MANUAL')
+            ->assertJsonPath('data.createdRelease.releasedTo', 'Elena Rostova')
+            ->assertJsonPath('data.createdRelease.requestingDepartment', 'Dispatch')
+            ->assertJsonPath('data.createdRelease.quantityReleased', 4);
 
         $this->assertDatabaseHas('releases', [
             'request_id' => 'MANUAL',

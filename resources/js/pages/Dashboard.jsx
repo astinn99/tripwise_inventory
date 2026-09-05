@@ -44,7 +44,7 @@ export const Dashboard = () => {
   const outOfStockCount = inventory.filter(i => i.status === 'OUT OF STOCK').length;
 
   const pendingSupplyRequests = supplyRequests.filter(r => r.status === 'Pending' || r.status === 'Received' || r.status === 'For Procurement').length;
-  const itemsForProcurement = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed').length;
+  const itemsForProcurement = procurementRequests.filter(p => !p.selectedSupplier && !p.poNumber && p.status !== 'Completed' && p.status !== 'Cancelled').length;
   const pendingQuotations = quotations.filter(q => q.status === 'Submitted').length;
   const totalPOs = purchaseOrders.length;
   const pendingFinanceApprovals = purchaseOrders.filter(p => p.poStatus === 'Pending Finance Approval').length;
@@ -74,10 +74,10 @@ export const Dashboard = () => {
   ];
 
   const procurementStatusData = [
-    { name: 'Quotation', value: procurementRequests.filter(p => p.status === 'Quotation' || p.status === 'Quotation Comparison').length, color: '#1D4ED8' },
-    { name: 'Finance Review', value: procurementRequests.filter(p => p.status === 'Pending Finance Approval').length, color: '#D97706' },
-    { name: 'Approved', value: procurementRequests.filter(p => p.status === 'Finance Approved').length, color: '#059669' },
-    { name: 'Completed', value: procurementRequests.filter(p => p.status === 'Completed').length, color: '#1D4ED8' }
+    { name: 'Quotation', value: procurementRequests.filter(p => p.status === 'Quotation' || p.status === 'Quotation Comparison').length, color: '#F58700' },
+    { name: 'Finance Review', value: procurementRequests.filter(p => p.status === 'Pending Finance Approval').length, color: '#FB9C21' },
+    { name: 'Approved', value: procurementRequests.filter(p => p.status === 'Finance Approved').length, color: '#B3EF0B' },
+    { name: 'Completed', value: procurementRequests.filter(p => p.status === 'Completed').length, color: '#CBF84F' }
   ];
 
   const poStatusData = [

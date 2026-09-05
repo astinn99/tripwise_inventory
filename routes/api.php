@@ -2,12 +2,14 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BootstrapController;
-use App\Http\Controllers\Api\LiveSyncController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DeliveryController;
+use App\Http\Controllers\Api\DepartmentSupplyApiController;
 use App\Http\Controllers\Api\DocumentController;
+use App\Http\Controllers\Api\ForecastController;
 use App\Http\Controllers\Api\InventoryItemController;
 use App\Http\Controllers\Api\InventoryMovementController;
+use App\Http\Controllers\Api\LiveSyncController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\OpportunityController;
 use App\Http\Controllers\Api\ProcurementRequestController;
@@ -19,7 +21,7 @@ use App\Http\Controllers\Api\StockCountController;
 use App\Http\Controllers\Api\StorageLocationController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\SupplyRequestController;
-use App\Http\Controllers\Api\DepartmentSupplyApiController;
+use App\Http\Controllers\Api\VendorMessageController;
 use App\Http\Controllers\Api\VendorRegistrationController;
 use Illuminate\Support\Facades\Route;
 
@@ -50,11 +52,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::post('/purchase-orders/{purchaseOrder}/confirm', [PurchaseOrderController::class, 'confirm']);
     Route::get('/opportunities', [OpportunityController::class, 'index']);
+    Route::post('/procurement-requests/{procurementRequest}/cancel', [ProcurementRequestController::class, 'cancel']);
     Route::get('/vendor/profile', [VendorRegistrationController::class, 'profile']);
+    Route::put('/vendor/profile', [VendorRegistrationController::class, 'update']);
+    Route::post('/vendor/profile/credentials/{document}', [VendorRegistrationController::class, 'replaceCredential']);
     Route::get('/documents/{document}/download', [DocumentController::class, 'download']);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+    Route::get('/messages', [VendorMessageController::class, 'index']);
+    Route::post('/messages', [VendorMessageController::class, 'store']);
+    Route::post('/messages/read', [VendorMessageController::class, 'markRead']);
 
     Route::middleware('internal')->group(function () {
         Route::get('/inventory-items', [InventoryItemController::class, 'index']);
@@ -63,6 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/inventory-items/{inventoryItem}/move', [InventoryItemController::class, 'move']);
         Route::post('/inventory-items/{inventoryItem}/adjust', [InventoryItemController::class, 'adjust']);
         Route::match(['put', 'post'], '/inventory-items/{inventoryItem}', [InventoryItemController::class, 'update']);
+        Route::delete('/inventory-items/{inventoryItem}', [InventoryItemController::class, 'destroy']);
 
         Route::get('/storage-locations', [StorageLocationController::class, 'index']);
         Route::post('/storage-locations', [StorageLocationController::class, 'store']);
@@ -96,5 +105,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/dashboard', DashboardController::class);
         Route::get('/reports', ReportController::class);
+        Route::get('/forecasts', [ForecastController::class, 'index']);
+        Route::get('/forecasts/{itemCode}', [ForecastController::class, 'show']);
+        Route::post('/forecasts/refresh', [ForecastController::class, 'refresh']);
     });
 });

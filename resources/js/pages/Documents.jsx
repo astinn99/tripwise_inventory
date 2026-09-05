@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { FileText, Plus, Filter, Download, Upload } from 'lucide-react';
 import { Modal } from '../components/ui/Modal';
+import { composeDtrsRows } from './dtrsRows';
 
 const DOC_TYPES = ['ALL', 'Warranty', 'Insurance', 'Contract', 'Purchase Order', 'Invoice', 'Inspection Report', 'Business Permit', 'SEC/DTI Registration'];
 const EXPIRY_REQUIRED = ['Warranty', 'Insurance', 'Contract', 'Business Permit'];
@@ -19,16 +20,40 @@ const emptyForm = {
 };
 
 export const Documents = () => {
-  const { documents, addDocument, searchQuery, suppliers, inventory, purchaseOrders } = useApp();
+  const { documents, addDocument, refreshDocuments, searchQuery, suppliers, inventory, purchaseOrders, deliveries } = useApp();
   const fileRef = useRef(null);
 
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [newDocForm, setNewDocForm] = useState(emptyForm);
   const [file, setFile] = useState(null);
+  const [listLoading, setListLoading] = useState(documents.length === 0);
+  const [listError, setListError] = useState('');
 
-  const filteredDocs = documents.filter((doc) => {
-    const haystack = [doc.title, doc.referenceNumber, doc.supplier, doc.category, doc.itemCode, doc.purchaseOrderNumber]
+  useEffect(() => {
+    let cancelled = false;
+    setListError('');
+    setListLoading(documents.length === 0);
+    refreshDocuments()
+      .catch((error) => {
+        if (!cancelled) {
+          setListError(error?.message || 'Unable to load documents.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setListLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const repository = composeDtrsRows(documents, purchaseOrders, deliveries);
+
+  const filteredDocs = repository.filter((doc) => {
+    const haystack = [doc.id, doc.title, doc.type, doc.referenceNumber, doc.supplier, doc.category, doc.itemCode, doc.purchaseOrderNumber]
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
@@ -103,10 +128,22 @@ export const Documents = () => {
           </span>
         </div>
 
-        {filteredDocs.length === 0 ? (
+        {listError ? (
+          <div className="empty-state">
+            <p>{listError}</p>
+          </div>
+        ) : listLoading && repository.length === 0 ? (
+          <div className="empty-state">
+            <p>Loading documents…</p>
+          </div>
+        ) : repository.length === 0 ? (
           <div className="empty-state">
             <p>No documents in DTRS yet. Use Add Document to archive a warranty, contract, invoice, or insurance file.</p>
             <p>Vendor warranties also appear here automatically after a delivery inspection passes.</p>
+          </div>
+        ) : filteredDocs.length === 0 ? (
+          <div className="empty-state">
+            <p>No documents match the current search or type filter.</p>
           </div>
         ) : (
           <div className="table-responsive">

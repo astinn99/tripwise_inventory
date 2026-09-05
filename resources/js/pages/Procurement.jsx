@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ShoppingCart, FileSpreadsheet, Send, Edit3, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, FileSpreadsheet, Send, Edit3, AlertTriangle, X } from 'lucide-react';
 import { ItemIdentity, itemImageUrl } from '../components/ui/ItemThumb';
+import { Modal } from '../components/ui/Modal';
 import { normalizePriority, priorityBadgeClass, quoteWindowDays } from '../services/priority';
 import { formatDisplayDate } from '../services/dates';
 
@@ -13,10 +14,13 @@ export const Procurement = () => {
     setModalData,
     searchQuery,
     sendProcurementToVendors,
+    cancelProcurementRequest,
+    actionLoading,
   } = useApp();
+  const [pendingCancel, setPendingCancel] = useState(null);
 
   const filteredPRs = procurementRequests.filter(pr => {
-    if (pr.selectedSupplier || pr.poNumber) {
+    if (pr.status === 'Cancelled' || pr.selectedSupplier || pr.poNumber) {
       return false;
     }
 
@@ -157,6 +161,16 @@ export const Procurement = () => {
                             <FileSpreadsheet className="w-3.5 h-3.5" /> Compare Quotes
                           </button>
                         )}
+                        {pr.canCancel !== false && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingCancel(pr)}
+                            className="btn btn-outline btn-sm"
+                            title="Cancel this procurement request"
+                          >
+                            <X className="w-3.5 h-3.5" /> Cancel
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -166,6 +180,41 @@ export const Procurement = () => {
           </table>
         </div>
       </div>
+
+      {pendingCancel && (
+        <Modal
+          onClose={() => setPendingCancel(null)}
+          icon={X}
+          tone="rose"
+          size="sm"
+          title="Cancel procurement request"
+          subtitle={`${pendingCancel.id} will close on both portals.`}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPendingCancel(null)}>
+                Keep request
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={actionLoading}
+                onClick={async () => {
+                  try {
+                    await cancelProcurementRequest(pendingCancel.id);
+                    setPendingCancel(null);
+                  } catch {
+                    // actionError banner
+                  }
+                }}
+              >
+                Cancel request
+              </button>
+            </>
+          )}
+        >
+          <p className="text-sm">Vendors will no longer see this RFQ. This cannot be used after the supply is fully delivered.</p>
+        </Modal>
+      )}
     </div>
   );
 };
